@@ -1,17 +1,25 @@
 --- #YAML:1.0
-name:                DBIx-Class-ResultSet-RecursiveUpdate
-version:             v0.001
-abstract:            like update_or_create - but recursive 
-license:             ~
-author:              
+name:               DBIx-Class-ResultSet-RecursiveUpdate
+version:            v0.002
+abstract:           like update_or_create - but recursive 
+author:
     - Zbigniew Lukasiak <zby@cpan.org>
-generated_by:        ExtUtils::MakeMaker version 6.40
-distribution_type:   module
-requires:     
-    DBIx::Class:                   0
-    DBIx::Class::IntrospectableM2M: 0
-    Test::More:                    0
-    version:                       0
+license:            unknown
+distribution_type:  module
+configure_requires:
+    ExtUtils::MakeMaker:  0
+requires:
+    DateTime:             0
+    DBIx::Class:          0.08011
+    DBIx::Class::IntrospectableM2M:  0
+    SQL::Translator:      0.08
+    Test::More:           0
+    version:              0
+no_index:
+    directory:
+        - t
+        - inc
+generated_by:       ExtUtils::MakeMaker version 6.48
 meta-spec:
-    url:     http://module-build.sourceforge.net/META-spec-v1.3.html
-    version: 1.3
+    url:      http://module-build.sourceforge.net/META-spec-v1.4.html
+    version:  1.4
