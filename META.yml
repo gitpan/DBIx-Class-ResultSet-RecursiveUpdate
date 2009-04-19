@@ -1,15 +1,16 @@
 --- #YAML:1.0
 name:               DBIx-Class-ResultSet-RecursiveUpdate
-version:            v0.002
-abstract:           like update_or_create - but recursive 
+version:            v0.004
+abstract:           like update_or_create - but recursive
 author:
     - Zbigniew Lukasiak <zby@cpan.org>
-license:            unknown
+license:            perl
 distribution_type:  module
 configure_requires:
     ExtUtils::MakeMaker:  0
 requires:
     DateTime:             0
+    DBD::SQLite:          0
     DBIx::Class:          0.08011
     DBIx::Class::IntrospectableM2M:  0
     SQL::Translator:      0.08
