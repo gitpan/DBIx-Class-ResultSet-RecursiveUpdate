@@ -2,7 +2,7 @@ use strict;
 use warnings;
 package DBIx::Class::ResultSet::RecursiveUpdate;
 
-use version; our $VERSION = qv('0.005');
+use version; our $VERSION = qv('0.006');
 
 use base qw(DBIx::Class::ResultSet);
 
@@ -30,8 +30,7 @@ sub recursive_update {
     if ( blessed($updates) && $updates->isa('DBIx::Class::Row') ) {
         return $updates;
     }
-
-
+    # warn Dumper( $updates ); use Data::Dumper;
     # direct column accessors
     my %columns;
 
@@ -42,10 +41,24 @@ sub recursive_update {
     # relations that that should be done after the row is inserted into the database
     # like has_many and might_have
     my %post_updates;
+    my %other_methods;
     my %columns_by_accessor = _get_columns_by_accessor( $self );
-
     for my $name ( keys %$updates ) {
         my $source = $self->result_source;
+        if( $name eq 'id'
+#            && scalar @{$source->primary_columns} == 1
+            && !$source->has_column( 'id' )
+        ){
+            my @ids = ( $updates->{id} );
+            if( ref $updates->{id} ){
+                @ids = @{ $updates->{id} };
+            }
+            my $i = 0;
+            for my $key ( $source->primary_columns ){
+                $columns{ $key } = $ids[ $i++ ];
+            }
+            next;
+        }
         if ( $columns_by_accessor{$name}
             && !( $source->has_relationship($name) && ref( $updates->{$name} ) )
           )
@@ -53,7 +66,10 @@ sub recursive_update {
             $columns{$name} = $updates->{$name};
             next;
         }
-        next if !$source->has_relationship($name);
+        if( !( $source->has_relationship($name) ) ){
+            $other_methods{$name} = $updates->{$name};
+            next;
+        }
         my $info = $source->relationship_info($name);
         if (
             _master_relation_cond(
@@ -67,7 +83,7 @@ sub recursive_update {
             $post_updates{$name} = $updates->{$name};
         }
     }
-    # warn 'columns: ' . Dumper( \%columns ); use Data::Dumper;
+    # warn 'other: ' . Dumper( \%other_methods ); use Data::Dumper;
 
     my @missing =
       grep { !exists $columns{$_} && !exists $fixed_fields{$_} } $self->result_source->primary_columns;
@@ -75,17 +91,18 @@ sub recursive_update {
         $object = $self->find( \%columns, { key => 'primary' } );
     }
     $object ||= $self->new( {} );
-
-# first update columns and other accessors - so that later related records can be found
+    # first update columns and other accessors - so that later related records can be found
     for my $name ( keys %columns ) {
-        $object->$name( $updates->{$name} );
+        $object->$name( $columns{$name} );
+    }
+    for my $name ( keys %other_methods) {
+        $object->$name( $updates->{$name} ) if $object->can( $name );
     }
     for my $name ( keys %pre_updates ) {
         my $info = $object->result_source->relationship_info($name);
         _update_relation( $self, $name, $updates, $object, $info );
     }
 #    $self->_delete_empty_auto_increment($object);
-
 # don't allow insert to recurse to related objects - we do the recursion ourselves
 #    $object->{_rel_in_storage} = 1;
     $object->update_or_insert;
@@ -99,7 +116,17 @@ sub recursive_update {
             my ($pk) = _get_pk_for_related( $self, $name);
             my @rows;
             my $result_source = $object->$name->result_source;
-            for my $elem ( @{ $updates->{$name} } ) {
+            my @updates;
+            if( ! defined $value ){
+                next;
+            }
+            elsif( ref $value ){
+                @updates = @{ $value };
+            }
+            else{
+                @updates = ( $value );
+            }
+            for my $elem ( @updates ) {
                 if ( ref $elem ) {
                     push @rows, $result_source->resultset->find($elem);
                 }
@@ -150,9 +177,25 @@ sub _update_relation {
     }
     else {
         my $sub_updates = $updates->{$name};
-        $sub_updates = { %$sub_updates, %$resolved } if $resolved && ref( $sub_updates ) eq 'HASH';
-        my $sub_object =
-          recursive_update( resultset => $related_result, updates => $sub_updates );
+        my $sub_object;
+        if( ref $sub_updates ){
+            $sub_updates = { %$sub_updates, %$resolved } if $resolved && ref( $sub_updates ) eq 'HASH';
+            # for might_have relationship
+            if( $info->{attrs}{accessor} eq 'single' && defined $object->$name ){
+                $sub_object = recursive_update( 
+                    resultset => $related_result, 
+                    updates => $sub_updates, 
+                    object =>  $object->$name 
+                );
+            }
+            else{ 
+                $sub_object =
+                recursive_update( resultset => $related_result, updates => $sub_updates );
+            }
+        }
+        elsif( ! ref $sub_updates ){
+            $sub_object = $related_result->find( $sub_updates );
+        }
         $object->set_from_related( $name, $sub_object );
     }
 }
@@ -255,7 +298,7 @@ DBIx::Class::ResultSet::RecursiveUpdate - like update_or_create - but recursive
 
 =head1 VERSION
 
-This document describes DBIx::Class::ResultSet::RecursiveUpdate version 0.004
+This document describes DBIx::Class::ResultSet::RecursiveUpdate version 0.006
 
 
 =head1 SYNOPSIS
