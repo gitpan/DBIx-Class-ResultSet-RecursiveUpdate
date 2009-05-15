@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               DBIx-Class-ResultSet-RecursiveUpdate
-version:            v0.006
+version:            v0.007
 abstract:           like update_or_create - but recursive
 author:
     - Zbigniew Lukasiak <zby@cpan.org>
