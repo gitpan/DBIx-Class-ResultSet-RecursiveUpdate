@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               DBIx-Class-ResultSet-RecursiveUpdate
-version:            v0.007
+version:            v0.008
 abstract:           like update_or_create - but recursive
 author:
     - Zbigniew Lukasiak <zby@cpan.org>
@@ -15,7 +15,7 @@ requires:
     DBD::SQLite:          1.21
     DBIx::Class:          0.08100
     DBIx::Class::IntrospectableM2M:  0
-    SQL::Translator:      0.08
+    SQL::Translator:      0.09004
     Test::More:           0
     version:              0
 no_index:
