@@ -4,12 +4,12 @@ use Exporter 'import'; # gives you Exporter's import() method directly
 @EXPORT = qw(run_tests);
 use strict;
 use Test::More; 
-
+use DBIx::Class::ResultSet::RecursiveUpdate;
 
 sub run_tests{
     my $schema = shift;
 
-    plan tests => 30;
+    plan tests => 36;
     
     my $dvd_rs = $schema->resultset( 'Dvd' );
     my $user_rs = $schema->resultset( 'User' );
@@ -106,6 +106,17 @@ sub run_tests{
     is ( $dvd_updated->tags->count, 0, 'Tags deleted' );
     is ( $dvd_updated->liner_notes->notes, 'test note changed', 'might_have record changed' );
 
+    $new_dvd->update( { name => 'New Test Name' } );
+    $updates = {
+            id => $new_dvd->dvd_id, # id instead of dvd_id
+            like_has_many => [
+            { dvd_name => $dvd->name, key2 => 1 }
+            ],
+    };
+    $dvd_updated = $dvd_rs->recursive_update( $updates );
+    ok ( $schema->resultset( 'Twokeys' )->find( { dvd_name => 'New Test Name', key2 => 1 } ), 'Twokeys updated' );
+    ok ( !$schema->resultset( 'Twokeys' )->find( { dvd_name => $dvd->name, key2 => 1 } ), 'Twokeys updated' );
+ 
     # repeatable
     
     $updates = {
@@ -140,14 +151,54 @@ sub run_tests{
             street => "101 Main Street",
             city => "Podunk",
             state => "New York"
-        }
+        },
+        owned_dvds =>[
+            {
+                id => 1,
+            },
+        ]
     };
     $user = $user_rs->recursive_update( $updates );
     $user = $user_rs->recursive_update( $updates );
     is( $schema->resultset( 'Address' )->search({ user_id => $user->id  })->count, 1,
             'the right number of addresses' );
+    $dvd = $dvd_rs->find( 1 );
+    is( $dvd->get_column( 'owner' ), $user->id, 'foreign key set' );
 
+    $dvd_rs->update( { current_borrower => $user->id } );
+    ok( $user->borrowed_dvds->count > 1, 'Precond' );
+    $updates = {
+        id => $user->id,
+        borrowed_dvds =>[
+        {
+            id => $dvd->id
+        },
+        ]
+    };
+    $user = DBIx::Class::ResultSet::RecursiveUpdate::Functions::recursive_update(
+        resultset => $user_rs,
+        updates => $updates,
+        if_not_submitted => 'set_to_null',
+    );
+    is( $user->borrowed_dvds->count, 1, 'set_to_null' );
 
+    $dvd_rs->update( { current_borrower => $user->id } );
+    $updates = {
+        id => $user->id,
+        borrowed_dvds =>[
+        {
+            id => $dvd->id
+        },
+        ]
+    };
+    $user = DBIx::Class::ResultSet::RecursiveUpdate::Functions::recursive_update(
+        resultset => $user_rs,
+        updates => $updates,
+        if_not_submitted => 'delete',
+    );
+    is( $user->borrowed_dvds->count, 1, 'if_not_submitted delete' );
+
+ 
 #    $updates = {
 #            name => 'Test name 1',
 #    };
