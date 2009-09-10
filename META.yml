@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               DBIx-Class-ResultSet-RecursiveUpdate
-version:            0.011
+version:            0.012
 abstract:           like update_or_create - but recursive
 author:
     - Zbigniew Lukasiak <zby@cpan.org>
@@ -22,7 +22,7 @@ no_index:
     directory:
         - t
         - inc
-generated_by:       ExtUtils::MakeMaker version 6.50
+generated_by:       ExtUtils::MakeMaker version 6.55_02
 meta-spec:
     url:      http://module-build.sourceforge.net/META-spec-v1.4.html
     version:  1.4

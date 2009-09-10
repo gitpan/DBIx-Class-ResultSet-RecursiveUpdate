@@ -2,7 +2,7 @@ use strict;
 use warnings;
 package DBIx::Class::ResultSet::RecursiveUpdate;
 
-our $VERSION = '0.011';
+our $VERSION = '0.012';
 
 use base qw(DBIx::Class::ResultSet);
 
@@ -131,7 +131,7 @@ sub recursive_update {
             }
             for my $elem ( @updates ) {
                 if ( ref $elem ) {
-                    push @rows, $result_source->resultset->find($elem);
+                    push @rows, recursive_update( resultset => $result_source->resultset, updates => $elem );
                 }
                 else {
                     push @rows,
