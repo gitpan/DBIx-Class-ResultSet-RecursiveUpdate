@@ -2,7 +2,7 @@ use strict;
 use warnings;
 package DBIx::Class::ResultSet::RecursiveUpdate;
 
-our $VERSION = '0.012';
+our $VERSION = '0.013';
 
 use base qw(DBIx::Class::ResultSet);
 
@@ -107,8 +107,7 @@ sub recursive_update {
 # don't allow insert to recurse to related objects - we do the recursion ourselves
 #    $object->{_rel_in_storage} = 1;
 
-    $object->update_or_insert;
-
+    $object->update_or_insert if $object->is_changed;
 
     # updating many_to_many
     for my $name ( keys %$updates ) {
@@ -208,15 +207,17 @@ sub _update_relation {
                     object =>  $object->$name 
                 );
             }
-            else{ 
+            else{
                 $sub_object =
                 recursive_update( resultset => $related_result, updates => $sub_updates, resolved => $resolved );
             }
         }
         elsif( ! ref $sub_updates ){
-            $sub_object = $related_result->find( $sub_updates );
+            $sub_object = $related_result->find( $sub_updates )
+             unless (!$sub_updates && ($info->{attrs}{join_type} eq 'LEFT'));
         }
-        $object->set_from_related( $name, $sub_object );
+        $object->set_from_related( $name, $sub_object )
+          unless (!$sub_object && !$sub_updates && ($info->{attrs}{join_type} eq 'LEFT'));
     }
 }
 
@@ -314,12 +315,6 @@ __END__
 =head1 NAME
 
 DBIx::Class::ResultSet::RecursiveUpdate - like update_or_create - but recursive
-
-
-=head1 VERSION
-
-This document describes DBIx::Class::ResultSet::RecursiveUpdate version 0.006
-
 
 =head1 SYNOPSIS
 
