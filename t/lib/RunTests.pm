@@ -3,36 +3,115 @@ package RunTests;
 use Exporter 'import';    # gives you Exporter's import() method directly
 @EXPORT = qw(run_tests);
 use strict;
+use warnings;
 use Test::More;
+use Test::Warn;
 use DBIx::Class::ResultSet::RecursiveUpdate;
 
 sub run_tests {
     my $schema = shift;
 
-    plan tests => 46;
+    plan tests => 55;
 
     my $dvd_rs  = $schema->resultset('Dvd');
     my $user_rs = $schema->resultset('User');
 
-    my $owner              = $user_rs->next;
-    my $another_owner      = $user_rs->next;
-    my $initial_user_count = $user_rs->count;
-    my $initial_dvd_count  = $dvd_rs->count;
+    my $owner               = $user_rs->next;
+    my $another_owner       = $user_rs->next;
+    my $initial_user_count  = $user_rs->count;
+    my $expected_user_count = $initial_user_count;
+    my $initial_dvd_count   = $dvd_rs->count;
     my $updates;
 
-    # try to create with a not existing rel
-    $updates = {
-        name        => 'Test name for nonexisting rel',
-        username    => 'nonexisting_rel',
-        password    => 'whatever',
-        nonexisting => { foo => 'bar' },
-    };
-    eval { my $nonexisting_user = $user_rs->recursive_update($updates); };
-    like(
-        $@,
-        qr/No such column, relationship, many-to-many helper accessor or generic accessor 'nonexisting'/,
-        'nonexisting column, accessor, relationship fails'
+    # pre 0.21 api
+    $dvd_rs->search( { dvd_id => 1 } )
+        ->recursive_update( { owner => { username => 'aaa' } }, ['dvd_id'] );
+
+    my $u = $user_rs->find( $dvd_rs->find(1)->owner->id );
+    is( $u->username, 'aaa', 'fixed_fields pre 0.21 api ok' );
+
+    # 0.21+ api
+    $dvd_rs->search( { dvd_id => 1 } )->recursive_update(
+        { owner        => { username => 'bbb' } },
+        { fixed_fields => ['dvd_id'], }
     );
+
+    $u = $user_rs->find( $dvd_rs->find(1)->owner->id );
+    is( $u->username, 'bbb', 'fixed_fields 0.21+ api ok' );
+
+    {
+
+        # try to create with a not existing rel
+        my $updates = {
+            name        => 'Test for nonexisting rel',
+            username    => 'nonexisting_rel',
+            password    => 'whatever',
+            nonexisting => { foo => 'bar' },
+        };
+
+        warning_like {
+            my $user = $user_rs->recursive_update($updates);
+        }
+        qr/No such column, relationship, many-to-many helper accessor or generic accessor 'nonexisting'/,
+            'nonexisting column, accessor, relationship warns';
+        $expected_user_count++;
+        is( $user_rs->count, $expected_user_count, 'User created' );
+
+        # for future use when we switch from warn to throw_exception
+        # eval { $user_rs->recursive_update($updates); };
+        # like(
+        # $@,
+        # qr/No such column, relationship, many-to-many helper accessor or generic accessor 'nonexisting'/,
+        # 'nonexisting column, accessor, relationship fails'
+        # );
+    }
+
+    {
+
+        # try to create with a not existing rel but suppressed warning
+        my $updates = {
+            name        => 'Test for nonexisting rel with suppressed warning',
+            username    => 'suppressed_nonexisting_rel',
+            password    => 'whatever',
+            nonexisting => { foo => 'bar' },
+        };
+
+        warning_is {
+            my $user =
+                $user_rs->recursive_update( $updates,
+                { unknown_params_ok => 1 } );
+        }
+        "",
+            "nonexisting column, accessor, relationship doesn't warn with unknown_params_ok";
+        $expected_user_count++;
+        is( $user_rs->count, $expected_user_count, 'User created' );
+    }
+
+    {
+
+        # try to create with a not existing rel, suppressed warning but storage debugging
+        my $updates = {
+            name        => 'Test for nonexisting rel with suppressed warning but storage debugging',
+            username    => 'suppressed_nonexisting_rel_with_storage_debug',
+            password    => 'whatever',
+            nonexisting => { foo => 'bar' },
+        };
+
+        my $debug = $user_rs->result_source->storage->debug;
+        $user_rs->result_source->storage->debug(1);
+
+        warning_like {
+            my $user =
+                $user_rs->recursive_update( $updates,
+                { unknown_params_ok => 1 } );
+        }
+        qr/No such column, relationship, many-to-many helper accessor or generic accessor 'nonexisting'/,
+            "nonexisting column, accessor, relationship doesn't warn with unknown_params_ok";
+        $expected_user_count++;
+        is( $user_rs->count, $expected_user_count, 'User created' );
+
+        $user_rs->result_source->storage->debug($debug);
+    }
 
     # creating new record linked to some old record
     $updates = {
@@ -44,16 +123,15 @@ sub run_tests {
     my $new_dvd = $dvd_rs->recursive_update($updates);
 
     is( $dvd_rs->count, $initial_dvd_count + 1, 'Dvd created' );
+
     is( $schema->resultset('User')->count,
-        $initial_user_count, "No new user created" );
+        $expected_user_count, "No new user created" );
     is( $new_dvd->name,            'Test name 2',      'Dvd name set' );
     is( $new_dvd->owner->id,       $another_owner->id, 'Owner set' );
     is( $new_dvd->viewings->count, 1,                  'Viewing created' );
 
     # creating new records
     $updates = {
-
-        #aaaa => undef,
         tags             => [ '2', { id => '3' } ],
         name             => 'Test name',
         owner            => $owner,
@@ -72,12 +150,11 @@ sub run_tests {
     };
 
     my $dvd = $dvd_rs->recursive_update($updates);
+    $expected_user_count++;
 
     is( $dvd_rs->count, $initial_dvd_count + 2, 'Dvd created' );
     is( $schema->resultset('User')->count,
-        $initial_user_count + 1,
-        "One new user created"
-    );
+        $expected_user_count, "One new user created" );
     is( $dvd->name, 'Test name', 'Dvd name set' );
     is_deeply( [ map { $_->id } $dvd->tags ], [ '2', '3' ], 'Tags set' );
     is( $dvd->owner->id, $owner->id, 'Owner set' );
@@ -95,20 +172,19 @@ sub run_tests {
             ->find( { key1 => $onekey->id, key2 => 1 } ),
         'Twokeys_belongsto created'
     );
-    TODO: {
+TODO: {
         local $TODO = 'value of fk from a multi relationship';
         is( $dvd->twokeysfk, $onekey->id, 'twokeysfk in Dvd' );
-    };
+    }
     is( $dvd->name, 'Test name', 'Dvd name set' );
 
     # changing existing records
     my $num_of_users = $user_rs->count;
     $updates = {
         id               => $dvd->dvd_id,         # id instead of dvd_id
-                                                  #aaaa => undef,
         name             => undef,
         tags             => [],
-        'owner'          => $another_owner->id,
+        owner            => $another_owner->id,
         current_borrower => {
             username => 'new name a',
             name     => 'new name a',
@@ -121,11 +197,10 @@ sub run_tests {
 
     is( $dvd_updated->dvd_id, $dvd->dvd_id, 'Pk from "id"' );
     is( $schema->resultset('User')->count,
-        $initial_user_count + 1,
-        "No new user created"
-    );
+        $expected_user_count, "No new user created" );
     is( $dvd_updated->name, undef, 'Dvd name deleted' );
-    is( $dvd_updated->owner->id, $another_owner->id, 'Owner updated' );
+    is( $dvd_updated->get_column('owner'),
+        $another_owner->id, 'Owner updated' );
     is( $dvd_updated->current_borrower->name,
         'new name a', 'Related record modified' );
     is( $dvd_updated->tags->count, 0, 'Tags deleted' );
@@ -133,6 +208,15 @@ sub run_tests {
         'test note changed',
         'might_have record changed'
     );
+
+    my $dvd_with_tags =
+        $dvd_rs->recursive_update( { id => $dvd->dvd_id, tags => [ 1, 2 ] } );
+    is_deeply( [ map { $_->id } $dvd_with_tags->tags ], [ 1, 2 ],
+        'Tags set' );
+    my $dvd_without_tags =
+        $dvd_rs->recursive_update( { id => $dvd->dvd_id, tags => undef } );
+    is( $dvd_without_tags->tags->count,
+        0, 'Tags deleted when m2m accessor set to undef' );
 
     $new_dvd->update( { name => 'New Test Name' } );
     $updates = {
@@ -165,10 +249,10 @@ sub run_tests {
     };
 
     my $user = $user_rs->recursive_update($updates);
+    $expected_user_count++;
+
     is( $schema->resultset('User')->count,
-        $initial_user_count + 2,
-        "New user created"
-    );
+        $expected_user_count, "New user created" );
     is( $dvd_rs->count, $initial_dvd_count + 4, 'Dvds created' );
     my %owned_dvds = map { $_->name => $_ } $user->owned_dvds;
     is( scalar keys %owned_dvds, 2, 'Has many relations created' );
@@ -226,7 +310,7 @@ sub run_tests {
         );
     is( $user->borrowed_dvds->count, 1, 'if_not_submitted delete' );
 
-    @tags = $schema->resultset('Tag')->search();
+    @tags = $schema->resultset('Tag')->all;
     $dvd_updated =
         DBIx::Class::ResultSet::RecursiveUpdate::Functions::recursive_update(
         resultset => $schema->resultset('Dvd'),
@@ -256,14 +340,15 @@ sub run_tests {
     # delete has_many where foreign cols aren't nullable
     my $rs_user_dvd = $user->owned_dvds;
     my @user_dvd_ids = map { $_->id } $rs_user_dvd->all;
-    is( $rs_user_dvd->count, 1, 'user owns 1 dvd');
+    is( $rs_user_dvd->count, 1, 'user owns 1 dvd' );
     $updates = {
         id         => $user->id,
         owned_dvds => undef,
     };
     $user = $user_rs->recursive_update($updates);
-    is( $user->owned_dvds->count, 0, 'user owns no dvds');
-    is( $dvd_rs->search({ dvd_id => {-in => \@user_dvd_ids }})->count, 0, 'owned dvds deleted' );
+    is( $user->owned_dvds->count, 0, 'user owns no dvds' );
+    is( $dvd_rs->search( { dvd_id => { -in => \@user_dvd_ids } } )->count,
+        0, 'owned dvds deleted' );
 
 #    $updates = {
 #            name => 'Test name 1',

@@ -3,66 +3,118 @@ use warnings;
 
 package DBIx::Class::ResultSet::RecursiveUpdate;
 BEGIN {
-  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.20';
+  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.21';
 }
+
 # ABSTRACT: like update_or_create - but recursive
 
 use base qw(DBIx::Class::ResultSet);
 
 sub recursive_update {
-    my ( $self, $updates, $fixed_fields ) = @_;
+    my ( $self, $updates, $attrs ) = @_;
+
+    my $fixed_fields;
+    my $unknown_params_ok;
+
+    # 0.21+ api
+    if ( defined $attrs && ref $attrs eq 'HASH' ) {
+        $fixed_fields      = $attrs->{fixed_fields};
+        $unknown_params_ok = $attrs->{unknown_params_ok};
+    }
+
+    # pre 0.21 api
+    elsif ( defined $attrs && ref $attrs eq 'ARRAY' ) {
+        $fixed_fields = $attrs;
+    }
+
     return
         DBIx::Class::ResultSet::RecursiveUpdate::Functions::recursive_update(
-        resultset    => $self,
-        updates      => $updates,
-        fixed_fields => $fixed_fields
+        resultset         => $self,
+        updates           => $updates,
+        fixed_fields      => $fixed_fields,
+        unknown_params_ok => $unknown_params_ok,
         );
 }
 
 package DBIx::Class::ResultSet::RecursiveUpdate::Functions;
 BEGIN {
-  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.20';
+  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.21';
 }
-use Carp;
+use Carp::Clan qw/^DBIx::Class|^HTML::FormHandler|^Try::Tiny/;
 use Scalar::Util qw( blessed );
 use List::MoreUtils qw/ any /;
+use Try::Tiny;
 
 sub recursive_update {
     my %params = @_;
     my ( $self, $updates, $fixed_fields, $object, $resolved,
-        $if_not_submitted )
+        $if_not_submitted, $unknown_params_ok )
         = @params{
-        qw/resultset updates fixed_fields object resolved if_not_submitted/};
+        qw/resultset updates fixed_fields object resolved if_not_submitted unknown_params_ok/
+        };
     $resolved ||= {};
 
-    # warn 'entering: ' . $self->result_source->from();
-    carp 'fixed fields needs to be an array ref'
-        if $fixed_fields && ref($fixed_fields) ne 'ARRAY';
-    my %fixed_fields;
-    %fixed_fields = map { $_ => 1 } @$fixed_fields if $fixed_fields;
+    my $source = $self->result_source;
+
+    croak "first parameter needs to be defined"
+        unless defined $updates;
+
+    croak "first parameter needs to be a hashref"
+        unless ref($updates) eq 'HASH';
+
+    # warn 'entering: ' . $source->from();
+    croak 'fixed fields needs to be an arrayref'
+        if defined $fixed_fields && ref $fixed_fields ne 'ARRAY';
+
+    # always warn about additional parameters if storage debugging is enabled
+    $unknown_params_ok = 0
+        if $source->storage->debug;
+
     if ( blessed($updates) && $updates->isa('DBIx::Class::Row') ) {
         return $updates;
     }
-    if ( $updates->{id} ) {
+
+    if ( !defined $object && exists $updates->{id} ) {
+
+        # warn "finding object by id " . $updates->{id} . "\n";
         $object = $self->find( $updates->{id}, { key => 'primary' } );
+
+        # warn "object not found by id\n"
+        #     unless defined $object;
     }
+
+    my %fixed_fields = map { $_ => 1 } @$fixed_fields
+        if $fixed_fields;
+
+    # the updates hashref might contain the pk columns
+    # but with an undefined value
     my @missing =
-        grep { !exists $updates->{$_} && !exists $fixed_fields{$_} }
-        $self->result_source->primary_columns;
-    if ( !$object && !scalar @missing ) {
+        grep { !defined $updates->{$_} && !exists $fixed_fields{$_} }
+        $source->primary_columns;
+
+    # warn "MISSING: " . join(', ', @missing) . "\n";
+    if ( !defined $object && scalar @missing == 0 ) {
 
         # warn 'finding by: ' . Dumper( $updates ); use Data::Dumper;
         $object = $self->find( $updates, { key => 'primary' } );
     }
+
+    # add the resolved columns to the updates hashref
     $updates = { %$updates, %$resolved };
-    @missing =
-        grep { !exists $resolved->{$_} } @missing;
-    if ( !$object && !scalar @missing ) {
+
+    # the resolved hashref might contain the pk columns
+    # but with an undefined value
+    @missing = grep { !defined $resolved->{$_} } @missing;
+
+    #warn "MISSING2: " . join( ', ', @missing ) . "\n";
+    if ( !defined $object && scalar @missing == 0 ) {
 
        # warn 'finding by +resolved: ' . Dumper( $updates ); use Data::Dumper;
         $object = $self->find( $updates, { key => 'primary' } );
     }
-    $object ||= $self->new( {} );
+
+    $object = $self->new( {} )
+        unless defined $object;
 
     # warn Dumper( $updates ); use Data::Dumper;
     # direct column accessors
@@ -76,13 +128,13 @@ sub recursive_update {
     # database like has_many, might_have and has_one
     my %post_updates;
     my %other_methods;
+    my %m2m_accessors;
     my %columns_by_accessor = _get_columns_by_accessor($self);
 
     #    warn 'resolved: ' . Dumper( $resolved );
     #    warn 'updates: ' . Dumper( $updates ); use Data::Dumper;
     #    warn 'columns: ' . Dumper( \%columns_by_accessor );
     for my $name ( keys %$updates ) {
-        my $source = $self->result_source;
 
         # columns
         if ( exists $columns_by_accessor{$name}
@@ -115,7 +167,7 @@ sub recursive_update {
         if ( is_m2m( $self, $name ) ) {
 
             #warn "$name is a many-to-many helper accessor\n";
-            $other_methods{$name} = $updates->{$name};
+            $m2m_accessors{$name} = $updates->{$name};
             next;
         }
 
@@ -128,11 +180,16 @@ sub recursive_update {
         }
 
         # unknown
-        # TODO: don't throw a warning instead of an exception to give users
-        #       time to adapt to the new API
-        $self->throw_exception(
+
+        # don't throw a warning instead of an exception to give users
+        # time to adapt to the new API
+        carp(
             "No such column, relationship, many-to-many helper accessor or generic accessor '$name'"
-        );
+        ) unless $unknown_params_ok;
+
+#$self->throw_exception(
+#    "No such column, relationship, many-to-many helper accessor or generic accessor '$name'"
+#);
     }
 
     # warn 'other: ' . Dumper( \%other_methods ); use Data::Dumper;
@@ -147,7 +204,7 @@ sub recursive_update {
     for my $name ( keys %other_methods ) {
 
         #warn "update other $name\n";
-        $object->$name( $updates->{$name} );
+        $object->$name( $other_methods{$name} );
     }
     for my $name ( keys %pre_updates ) {
 
@@ -160,48 +217,49 @@ sub recursive_update {
     # don't allow insert to recurse to related objects
     # do the recursion ourselves
     # $object->{_rel_in_storage} = 1;
-    #warn "CHANGED: " . $object->is_changed . "\n":
+    #warn "CHANGED: " . $object->is_changed . "\n";
     #warn "IN STOR: " .  $object->in_storage . "\n";
     $object->update_or_insert if $object->is_changed;
     $object->discard_changes;
 
     # updating many_to_many
-    for my $name ( keys %$updates ) {
-        next if exists $columns{$name};
-        my $value = $updates->{$name};
+    for my $name ( keys %m2m_accessors ) {
+        my $value = $m2m_accessors{$name};
 
-        if ( is_m2m( $self, $name ) ) {
-
-            #warn "update m2m $name\n";
-            my ($pk) = _get_pk_for_related( $self, $name );
-            my @rows;
-            my $result_source = $object->$name->result_source;
-            my @updates;
-            if ( !defined $value ) {
-                next;
+        #warn "update m2m $name\n";
+        # TODO: only first pk col is used
+        my ($pk) = _get_pk_for_related( $self, $name );
+        my @rows;
+        my $result_source = $object->$name->result_source;
+        my @updates;
+        if ( defined $value && ref $value eq 'ARRAY' ) {
+            @updates = @{$value};
+        }
+        elsif ( defined $value && !ref $value ) {
+            @updates = ($value);
+        }
+        elsif ( defined $value ) {
+            carp
+                "value of many-to-many rel '$name' must be an arrayref or scalar: $value";
+        }
+        for my $elem (@updates) {
+            if ( blessed($elem) && $elem->isa('DBIx::Class::Row') ) {
+                push @rows, $elem;
             }
-            elsif ( ref $value ) {
-                @updates = @{$value};
+            elsif ( ref $elem eq 'HASH' ) {
+                push @rows,
+                    recursive_update(
+                    resultset => $result_source->resultset,
+                    updates   => $elem
+                    );
             }
             else {
-                @updates = ($value);
+                push @rows,
+                    $result_source->resultset->find( { $pk => $elem } );
             }
-            for my $elem (@updates) {
-                if ( ref $elem ) {
-                    push @rows,
-                        recursive_update(
-                        resultset => $result_source->resultset,
-                        updates   => $elem
-                        );
-                }
-                else {
-                    push @rows,
-                        $result_source->resultset->find( { $pk => $elem } );
-                }
-            }
-            my $set_meth = 'set_' . $name;
-            $object->$set_meth( \@rows );
         }
+        my $set_meth = 'set_' . $name;
+        $object->$set_meth( \@rows );
     }
     for my $name ( keys %post_updates ) {
 
@@ -257,6 +315,8 @@ sub _update_relation {
         if defined $DBIx::Class::ResultSource::UNRESOLVABLE_CONDITION
             && $DBIx::Class::ResultSource::UNRESOLVABLE_CONDITION
             == $resolved;
+
+    #warn "RESOLVED: " . Dumper($resolved); use Data::Dumper;
 
     my @rel_cols = keys %{ $info->{cond} };
     map {s/^foreign\.//} @rel_cols;
@@ -327,9 +387,11 @@ sub _update_relation {
                 }
                 push @cond, \%cond_for_obj;
             }
+
             # only limit resultset if there are related rows left
-            if (scalar @cond) {
-                $rs_rel_delist = $rs_rel_delist->search_rs( { -not => [@cond] } );
+            if ( scalar @cond ) {
+                $rs_rel_delist =
+                    $rs_rel_delist->search_rs( { -not => [@cond] } );
             }
         }
 
@@ -354,9 +416,12 @@ sub _update_relation {
         #warn "\tupdating rel '$name': $if_not_submitted\n";
         my $sub_object;
         if ( ref $updates ) {
+            if ( blessed($updates) && $updates->isa('DBIx::Class::Row') ) {
+                $sub_object = $updates;
+            }
 
             # for might_have relationship
-            if ( $info->{attrs}{accessor} eq 'single'
+            elsif ( $info->{attrs}{accessor} eq 'single'
                 && defined $object->$name )
             {
                 $sub_object = recursive_update(
@@ -526,14 +591,14 @@ DBIx::Class::ResultSet::RecursiveUpdate - like update_or_create - but recursive
 
 =head1 VERSION
 
-version 0.20
+version 0.21
 
 =head1 SYNOPSIS
 
     # The functional interface:
 
     my $schema = MyDB::Schema->connect();
-    my $new_item = DBIx::Class::ResultSet::RecursiveUpdate::Functions::recursive_update({ 
+    my $new_item = DBIx::Class::ResultSet::RecursiveUpdate::Functions::recursive_update(
         resultset => $schema->resultset('User'),
         updates => {
             id => 1,
@@ -542,15 +607,16 @@ version 0.20
                     title => "One Flew Over the Cuckoo's Nest"
                 }
             ]
-        }
-    });
+        },
+        unknown_params_ok => 1,
+    );
 
 
     # As ResultSet subclass:
 
     __PACKAGE__->load_namespaces( default_resultset_class => '+DBIx::Class::ResultSet::RecursiveUpdate' );
 
-    # in the Schema file (see t/lib/DBSchema.pm).  Or appriopriate 'use base' in the ResultSet classes. 
+    # in the Schema file (see t/lib/DBSchema.pm).  Or appropriate 'use base' in the ResultSet classes.
 
     my $user = $schema->resultset('User')->recursive_update({
         id => 1,
@@ -559,53 +625,79 @@ version 0.20
                 title => "One Flew Over the Cuckoo's Nest"
             }
         ]
+    }, {
+        unknown_params_ok => 1,
     });
+
+    # You'll get a warning if you pass non-result specific data to
+    # recursive_update. See L</"Additional data in the updates hashref">
+    # for more information how to prevent this.
 
 =head1 DESCRIPTION
 
-This is still experimental. I've added a functional interface so that it can be used 
-in Form Processors and not require modification of the model.
+This is still experimental.
 
-You can feed the ->create method with a recursive datastructure and have the related records
-created.  Unfortunately you cannot do a similar thing with update_or_create - this module
-tries to fill that void. 
+You can feed the ->create method of DBIx::Class with a recursive datastructure
+and have the related records created. Unfortunately you cannot do a similar
+thing with update_or_create. This module tries to fill that void until
+L<DBIx::Class> has an api itself.
 
-It is a base class for ResultSets providing just one method: recursive_update
-which works just like update_or_create but can recursively update or create
-data objects composed of multiple rows. All rows need to be identified by primary keys
-- so you need to provide them in the update structure (unless they can be deduced from 
-the parent row - for example when you have a belongs_to relationship).  
-If not all colums comprising the primary key are specified - then a new row will be created,
-with the expectation that the missing columns will be filled by it (as in the case of auto_increment 
-primary keys).  
+The functional interface can be used without modifications of the model,
+for example by form processors like L<HTML::FormHandler::Model::DBIC>.
 
-If the resultset itself stores an assignement for the primary key, 
+It is a base class for L<DBIx::Class::ResultSet>s providing the method
+recursive_update which works just like update_or_create but can recursively
+update or create result objects composed of multiple rows. All rows need to be
+identified by primary keys so you need to provide them in the update structure
+(unless they can be deduced from the parent row. For example a related row of
+a belongs_to relationship). If any of the primary key columns are missing,
+a new row will be created, with the expectation that the missing columns will
+be filled by it (as in the case of auto_increment primary keys).
+
+If the resultset itself stores an assignment for the primary key,
 like in the case of:
 
     my $restricted_rs = $user_rs->search( { id => 1 } );
 
-then you need to inform recursive_update about additional predicate with a second argument:
+you need to inform recursive_update about the additional predicate with the fixed_fields attribute:
 
-    my $user = $restricted_rs->recursive_update( { 
-        owned_dvds => [ 
-        { 
-          title => 'One Flew Over the Cuckoo's Nest' 
-        } 
-        ] 
-      },
-      [ 'id' ]
+    my $user = $restricted_rs->recursive_update( {
+            owned_dvds => [
+            {
+                title => 'One Flew Over the Cuckoo's Nest'
+            }
+            ]
+        },
+        {
+            fixed_fields => [ 'id' ],
+        }
     );
 
-This will work with a new DBIC release.
-
 For a many_to_many (pseudo) relation you can supply a list of primary keys
-from the other table - and it will link the record at hand to those and
-only those records identified by them.  This is convenient for handling web
-forms with check boxes (or a SELECT box with multiple choice) that let you
+from the other table and it will link the record at hand to those and
+only those records identified by them. This is convenient for handling web
+forms with check boxes (or a select field with multiple choice) that lets you
 update such (pseudo) relations.  
 
-For a description how to set up base classes for ResultSets see load_namespaces
-in DBIx::Class::Schema.
+For a description how to set up base classes for ResultSets see
+L<DBIx::Class::Schema/load_namespaces>.
+
+=head2 Additional data in the updates hashref
+
+If you pass additional data to recursive_update which doesn't match a column
+name, column accessor, relationship or many-to-many helper accessor, it will
+throw a warning by default. To disable this behaviour you can set the
+unknown_params_ok attribute to a true value.
+
+The warning thrown is:
+"No such column, relationship, many-to-many helper accessor or generic accessor '$key'"
+
+When used by L<HTML::FormHandler::Model::DBIC> this can happen if you have
+additional form fields that aren't relevant to the database but don't have the
+noupdate attribute set to a true value.
+
+NOTE: in a future version this behaviour will change and throw an exception
+instead of a warning!
 
 =head1 DESIGN CHOICES
 
@@ -680,6 +772,67 @@ Updating the relationship:
 
     Passing ids:
 
+    my $user = $user_rs->recursive_update( {
+        id         => 1,
+        owned_dvds => [1, 2],
+    });
+
+    Passing hashrefs:
+
+    my $user = $user_rs->recursive_update( {
+        id         => 1,
+        owned_dvds => [
+            {
+                name => 'temp name 1',
+            },
+            {
+                name => 'temp name 2',
+            },
+        ],
+    });
+
+    Passing objects:
+
+    my $user = $user_rs->recursive_update( {
+        id         => 1,
+        owned_dvds => [ $dvd1, $dvd2 ],
+    });
+
+    You can even mix them:
+
+    my $user = $user_rs->recursive_update( {
+        id         => 1,
+        owned_dvds => [ 1, { id => 2 } ],
+    });
+
+Clearing the relationship:
+
+    my $user = $user_rs->recursive_update( {
+        id         => 1,
+        owned_dvds => undef,
+    });
+
+    This is the same as passing an empty array:
+
+    my $user = $user_rs->recursive_update( {
+        id         => 1,
+        owned_dvds => [],
+    });
+
+=head2 Treatment of many-to-many pseudo relations
+
+If a many-to-many accessor key is included in the data structure with a value
+of undef or an empty array, all existing related rows are unlinked.
+
+When the array contains elements they are updated if they exist, created when
+not and deleted if not included.
+
+See L</is_m2m> for many-to-many pseudo relationship detection.
+
+Updating the relationship:
+
+    Passing ids:
+
     my $dvd = $dvd_rs->recursive_update( {
         id   => 1,
         tags => [1, 2],
@@ -703,13 +856,16 @@ Updating the relationship:
 
     Passing objects:
 
-    TODO
+    my $dvd = $dvd_rs->recursive_update( {
+        id   => 1,
+        tags => [ $tag1, $tag2 ],
+    });
 
     You can even mix them:
 
     my $dvd = $dvd_rs->recursive_update( {
         id   => 1,
-        tags => [ '2', { id => '3' } ],
+        tags => [ 2, { id => 3 } ],
     });
 
 Clearing the relationship:
@@ -726,20 +882,6 @@ Clearing the relationship:
         tags => [],
     });
 
-=head2 Treatment of many-to-many pseudo relations
-
-The function gets the information about m2m relations from DBIx::Class::IntrospectableM2M.
-If it isn't loaded in the ResultSource classes the code relies on the fact that:
-
-    if($object->can($name) and
-             !$object->result_source->has_relationship($name) and
-             $object->can( 'set_' . $name )
-         )
-
-Then $name must be a many to many pseudo relation.
-And that in a similarly ugly was I find out what is the ResultSource of
-objects from that many to many pseudo relation.
-
 =head1 INTERFACE 
 
 =head1 METHODS
@@ -750,15 +892,39 @@ The method that does the work here.
 
 =head2 is_m2m
 
-$self->is_m2m( 'name ' ) - answers the question if 'name' is a many to many
-(pseudo) relation on $self.
+=over 4
+
+=item Arguments: $name
+
+=item Return Value: true, if $name is a many to many pseudo-relationship
+
+=back
+
+The function gets the information about m2m relations from
+L<DBIx::Class::IntrospectableM2M>. If it isn't loaded in the ResultSource
+class, the code relies on the fact:
+
+    if($object->can($name) and
+             !$object->result_source->has_relationship($name) and
+             $object->can( 'set_' . $name )
+         )
+
+to identify a many to many pseudo relationship. In a similar ugly way the
+ResultSource of that many to many pseudo relationship is detected.
+
+So if you need many to many pseudo relationship support, it's strongly
+recommended to load L<DBIx::Class::IntrospectableM2M> in your ResultSource
+class!
 
 =head2 get_m2m_source
 
-$self->get_m2m_source( 'name' ) - returns the ResultSource linked to by the many
-to many (pseudo) relation 'name' from $self.
+=over 4
 
-=head1 DIAGNOSTICS
+=item Arguments: $name
+
+=item Return Value: $result_source
+
+=back
 
 =head1 CONFIGURATION AND ENVIRONMENT
 
@@ -768,13 +934,16 @@ DBIx::Class::RecursiveUpdate requires no configuration files or environment vari
 
     DBIx::Class
 
+optional but recommended:
+    DBIx::Class::IntrospectableM2M
+
 =head1 INCOMPATIBILITIES
 
 None reported.
 
 =head1 BUGS AND LIMITATIONS
 
-No bugs have been reported.
+The list of reported bugs can be viewed at L<http://rt.cpan.org/Public/Dist/Display.html?Name=DBIx-Class-ResultSet-RecursiveUpdate>.
 
 Please report any bugs or feature requests to
 C<bug-dbix-class-recursiveput@rt.cpan.org>, or through the web interface at

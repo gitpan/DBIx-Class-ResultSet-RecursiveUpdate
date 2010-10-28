@@ -28,6 +28,7 @@
       },
       "runtime" : {
          "requires" : {
+            "Carp::Clan" : "6.04",
             "DBD::SQLite" : "1.21",
             "DBIx::Class" : "0.08103",
             "DBIx::Class::IntrospectableM2M" : 0,
@@ -39,7 +40,8 @@
       },
       "test" : {
          "requires" : {
-            "Test::More" : "0.88"
+            "Test::More" : "0.88",
+            "Test::Warn" : "0.20"
          }
       }
    },
@@ -51,7 +53,7 @@
          "web" : "http://github.com/zby/DBIx--Class--ResultSet--RecursiveUpdate"
       }
    },
-   "version" : "0.20",
+   "version" : "0.21",
    "x_Dist_Zilla" : {
       "plugins" : [
          {
