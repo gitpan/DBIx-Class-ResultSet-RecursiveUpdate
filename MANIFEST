@@ -22,10 +22,14 @@ t/lib/DBSchema/Result/Twokeys_belongsto.pm
 t/lib/DBSchema/Result/User.pm
 t/lib/DBSchema/Result/UserRole.pm
 t/lib/DBSchema/Result/Viewing.pm
+t/lib/DBSchemaBase.pm
+t/lib/DBSchemaMoose.pm
+t/lib/DBSchemaMoose/ResultSet.pm
 t/lib/MySchema.pm
 t/lib/MySchema/Test.pm
 t/lib/RunTests.pm
 t/lib/sqlite.sql
+t/moosified-rs.t
 t/pg.t
 t/pod-coverage.t
 t/pod.t

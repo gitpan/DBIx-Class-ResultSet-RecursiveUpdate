@@ -3,7 +3,7 @@ use warnings;
 
 package DBIx::Class::ResultSet::RecursiveUpdate;
 BEGIN {
-  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.21';
+  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.22';
 }
 
 # ABSTRACT: like update_or_create - but recursive
@@ -38,7 +38,7 @@ sub recursive_update {
 
 package DBIx::Class::ResultSet::RecursiveUpdate::Functions;
 BEGIN {
-  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.21';
+  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.22';
 }
 use Carp::Clan qw/^DBIx::Class|^HTML::FormHandler|^Try::Tiny/;
 use Scalar::Util qw( blessed );
@@ -113,7 +113,7 @@ sub recursive_update {
         $object = $self->find( $updates, { key => 'primary' } );
     }
 
-    $object = $self->new( {} )
+    $object = $self->new_result( {} )
         unless defined $object;
 
     # warn Dumper( $updates ); use Data::Dumper;
@@ -332,7 +332,7 @@ sub _update_relation {
                 ->{is_nullable};
     }
 
-    $if_not_submitted = $all_fks_nullable ? 'nullify' : 'delete'
+    $if_not_submitted = $all_fks_nullable ? 'set_to_null' : 'delete'
         unless defined $if_not_submitted;
 
     #warn "\tNULLABLE: $all_fks_nullable ACTION: $if_not_submitted\n";
@@ -393,9 +393,9 @@ sub _update_relation {
                 $rs_rel_delist =
                     $rs_rel_delist->search_rs( { -not => [@cond] } );
             }
+            #warn "\tCOND: " . Dumper(\@cond);
         }
 
-        #warn "\tCOND: " . Dumper(\%cond);
         #my $rel_delist_cnt = $rs_rel_delist->count;
         if ( $if_not_submitted eq 'delete' ) {
 
@@ -469,7 +469,7 @@ sub is_m2m {
     if ( $rclass->can('_m2m_metadata') ) {
         return $rclass->_m2m_metadata->{$relation};
     }
-    my $object = $self->new( {} );
+    my $object = $self->new_result( {} );
     if (    $object->can($relation)
         and !$self->result_source->has_relationship($relation)
         and $object->can( 'set_' . $relation ) )
@@ -490,7 +490,7 @@ sub get_m2m_source {
             ->related_source(
             $rclass->_m2m_metadata->{$relation}{foreign_relation} );
     }
-    my $object = $self->new( {} );
+    my $object = $self->new_result( {} );
     my $r = $object->$relation;
     return $r->result_source;
 }
@@ -591,7 +591,7 @@ DBIx::Class::ResultSet::RecursiveUpdate - like update_or_create - but recursive
 
 =head1 VERSION
 
-version 0.21
+version 0.22
 
 =head1 SYNOPSIS
 
@@ -969,7 +969,7 @@ Alexander Hartmaier <abraxxa@cpan.org>
 
 =head1 COPYRIGHT AND LICENSE
 
-This software is copyright (c) 2010 by Zbigniew Lukasiak, John Napiorkowski, Alexander Hartmaier.
+This software is copyright (c) 2011 by Zbigniew Lukasiak, John Napiorkowski, Alexander Hartmaier.
 
 This is free software; you can redistribute it and/or modify it under
 the same terms as the Perl 5 programming language system itself.
