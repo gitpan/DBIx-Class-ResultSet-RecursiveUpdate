@@ -41,4 +41,5 @@ t/release-portability.t
 t/release-synopsis.t
 t/release-unused-vars.t
 t/sqlite.t
+t/var/dvdzbr.db
 t/var/placeholder

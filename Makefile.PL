@@ -4,7 +4,7 @@ use warnings;
 
 
 
-use ExtUtils::MakeMaker 6.31;
+use ExtUtils::MakeMaker 6.30;
 
 
 
@@ -16,7 +16,7 @@ my %WriteMakefileArgs = (
     'Test::Warn' => '0.20'
   },
   'CONFIGURE_REQUIRES' => {
-    'ExtUtils::MakeMaker' => '6.31'
+    'ExtUtils::MakeMaker' => '6.30'
   },
   'DISTNAME' => 'DBIx-Class-ResultSet-RecursiveUpdate',
   'EXE_FILES' => [],
@@ -32,7 +32,7 @@ my %WriteMakefileArgs = (
     'Readonly' => '1.03',
     'SQL::Translator' => '0.11006'
   },
-  'VERSION' => '0.23',
+  'VERSION' => '0.24',
   'test' => {
     'TESTS' => 't/*.t'
   }

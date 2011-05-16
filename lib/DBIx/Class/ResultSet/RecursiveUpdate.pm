@@ -3,7 +3,7 @@ use warnings;
 
 package DBIx::Class::ResultSet::RecursiveUpdate;
 BEGIN {
-  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.23';
+  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.24';
 }
 
 # ABSTRACT: like update_or_create - but recursive
@@ -38,7 +38,7 @@ sub recursive_update {
 
 package DBIx::Class::ResultSet::RecursiveUpdate::Functions;
 BEGIN {
-  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.23';
+  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.24';
 }
 use Carp::Clan qw/^DBIx::Class|^HTML::FormHandler|^Try::Tiny/;
 use Scalar::Util qw( blessed );
@@ -591,7 +591,7 @@ DBIx::Class::ResultSet::RecursiveUpdate - like update_or_create - but recursive
 
 =head1 VERSION
 
-version 0.23
+version 0.24
 
 =head1 SYNOPSIS
 
