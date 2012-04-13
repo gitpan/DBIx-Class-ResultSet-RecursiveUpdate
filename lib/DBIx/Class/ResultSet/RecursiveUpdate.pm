@@ -2,8 +2,8 @@ use strict;
 use warnings;
 
 package DBIx::Class::ResultSet::RecursiveUpdate;
-BEGIN {
-  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.24';
+{
+  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.25';
 }
 
 # ABSTRACT: like update_or_create - but recursive
@@ -37,8 +37,8 @@ sub recursive_update {
 }
 
 package DBIx::Class::ResultSet::RecursiveUpdate::Functions;
-BEGIN {
-  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.24';
+{
+  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.25';
 }
 use Carp::Clan qw/^DBIx::Class|^HTML::FormHandler|^Try::Tiny/;
 use Scalar::Util qw( blessed );
@@ -53,6 +53,7 @@ sub recursive_update {
         qw/resultset updates fixed_fields object resolved if_not_submitted unknown_params_ok/
         };
     $resolved ||= {};
+    $ENV{DBIC_NULLABLE_KEY_NOWARN} = 1;
 
     my $source = $self->result_source;
 
@@ -267,6 +268,7 @@ sub recursive_update {
         _update_relation( $self, $name, $post_updates{$name}, $object,
             $if_not_submitted );
     }
+    delete $ENV{DBIC_NULLABLE_KEY_NOWARN};
     return $object;
 }
 
@@ -591,7 +593,7 @@ DBIx::Class::ResultSet::RecursiveUpdate - like update_or_create - but recursive
 
 =head1 VERSION
 
-version 0.24
+version 0.25
 
 =head1 SYNOPSIS
 
@@ -969,7 +971,7 @@ Alexander Hartmaier <abraxxa@cpan.org>
 
 =head1 COPYRIGHT AND LICENSE
 
-This software is copyright (c) 2011 by Zbigniew Lukasiak, John Napiorkowski, Alexander Hartmaier.
+This software is copyright (c) 2012 by Zbigniew Lukasiak, John Napiorkowski, Alexander Hartmaier.
 
 This is free software; you can redistribute it and/or modify it under
 the same terms as the Perl 5 programming language system itself.
