@@ -34,7 +34,7 @@ my %WriteMakefileArgs = (
     "Readonly" => "1.03",
     "SQL::Translator" => "0.11006"
   },
-  "VERSION" => "0.25",
+  "VERSION" => "0.26",
   "test" => {
     "TESTS" => "t/*.t"
   }
