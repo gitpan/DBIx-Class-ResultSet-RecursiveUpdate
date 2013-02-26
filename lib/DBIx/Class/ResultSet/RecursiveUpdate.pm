@@ -3,7 +3,7 @@ use warnings;
 
 package DBIx::Class::ResultSet::RecursiveUpdate;
 {
-  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.26';
+  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.27';
 }
 
 # ABSTRACT: like update_or_create - but recursive
@@ -37,7 +37,7 @@ sub recursive_update {
 
 package DBIx::Class::ResultSet::RecursiveUpdate::Functions;
 {
-  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.26';
+  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.27';
 }
 use Carp::Clan qw/^DBIx::Class|^HTML::FormHandler|^Try::Tiny/;
 use Scalar::Util qw( blessed );
@@ -182,7 +182,8 @@ sub recursive_update {
     # don't allow insert to recurse to related objects
     # do the recursion ourselves
     # $object->{_rel_in_storage} = 1;
-    $object->update_or_insert if $object->is_changed;
+    # Update if %other_methods because of possible custom update method
+    $object->update_or_insert if ( $object->is_changed || keys %other_methods );
     $object->discard_changes;
 
     # updating many_to_many
@@ -514,7 +515,7 @@ DBIx::Class::ResultSet::RecursiveUpdate - like update_or_create - but recursive
 
 =head1 VERSION
 
-version 0.26
+version 0.27
 
 =head1 SYNOPSIS
 
@@ -886,11 +887,15 @@ John Napiorkowski <jjnapiork@cpan.org>
 
 Alexander Hartmaier <abraxxa@cpan.org>
 
+=item *
+
+Gerda Shank <gshank@cpan.org>
+
 =back
 
 =head1 COPYRIGHT AND LICENSE
 
-This software is copyright (c) 2012 by Zbigniew Lukasiak, John Napiorkowski, Alexander Hartmaier.
+This software is copyright (c) 2013 by Zbigniew Lukasiak, John Napiorkowski, Alexander Hartmaier.
 
 This is free software; you can redistribute it and/or modify it under
 the same terms as the Perl 5 programming language system itself.

@@ -1,0 +1,169 @@
+diff --git a/lib/DBIx/Class/ResultSet/RecursiveUpdate.pm b/lib/DBIx/Class/ResultSet/RecursiveUpdate.pm
+index 62bd014..106bfde 100644
+--- a/lib/DBIx/Class/ResultSet/RecursiveUpdate.pm
++++ b/lib/DBIx/Class/ResultSet/RecursiveUpdate.pm
+@@ -1,7 +1,7 @@
++package DBIx::Class::ResultSet::RecursiveUpdate;
+ use strict;
+ use warnings;
+-
+-package DBIx::Class::ResultSet::RecursiveUpdate;
++use Data::Dumper;
+ 
+ # ABSTRACT: like update_or_create - but recursive
+ 
+@@ -34,6 +34,9 @@ sub recursive_update {
+ }
+ 
+ package DBIx::Class::ResultSet::RecursiveUpdate::Functions;
++use strict;
++use warnings;
++use Data::Dumper;
+ use Carp::Clan qw/^DBIx::Class|^HTML::FormHandler|^Try::Tiny/;
+ use Scalar::Util qw( blessed );
+ use List::MoreUtils qw/ any /;
+@@ -47,7 +50,7 @@ sub recursive_update {
+         qw/resultset updates fixed_fields object resolved if_not_submitted unknown_params_ok/
+         };
+     $resolved ||= {};
+-    $ENV{DBIC_NULLABLE_KEY_NOWARN} = 1;
++#   $ENV{DBIC_NULLABLE_KEY_NOWARN} = 1;
+ 
+     my $source = $self->result_source;
+ 
+@@ -83,15 +86,16 @@ sub recursive_update {
+ 
+     # the updates hashref might contain the pk columns
+     # but with an undefined value
+-    my @missing =
+-        grep { !defined $updates->{$_} && !exists $fixed_fields{$_} }
+-        $source->primary_columns;
++    my @pk_columns = $source->primary_columns;
++    my @missing = grep { !defined $updates->{$_} && !exists $fixed_fields{$_} } @pk_columns;
+ 
+-    # warn "MISSING: " . join(', ', @missing) . "\n";
++    # warn "(12) MISSING: " . join(', ', @missing) . "\n";
+     if ( !defined $object && scalar @missing == 0 ) {
+ 
+         # warn 'finding by: ' . Dumper( $updates ); use Data::Dumper;
+-        $object = $self->find( $updates, { key => 'primary' } );
++        my %pk;
++        @pk{@pk_columns} = @{$updates}{@pk_columns};
++        $object = $self->find( \%pk, { key => 'primary' } );
+     }
+ 
+     # add the resolved columns to the updates hashref
+@@ -101,10 +105,15 @@ sub recursive_update {
+     # but with an undefined value
+     @missing = grep { !defined $resolved->{$_} } @missing;
+ 
+-    #warn "MISSING2: " . join( ', ', @missing ) . "\n";
++    warn "(12a) MISSING2: " . join( ', ', @missing ) . "\n";
++    warn "..... missing => " . Dumper(\@missing);
+     if ( !defined $object && scalar @missing == 0 ) {
+ 
+        # warn 'finding by +resolved: ' . Dumper( $updates ); use Data::Dumper;
++        my %pk;
++        @pk{@pk_columns} = @{$updates}{@pk_columns};
++        warn ".... pk => " . Dumper(\%pk);
++        warn ".... pk_columns => " . Dumper(\@pk_columns);
+         $object = $self->find( $updates, { key => 'primary' } );
+     }
+ 
+@@ -249,6 +258,7 @@ sub recursive_update {
+                     );
+             }
+             else {
++                # warn "(13) pk => $pk, elem => $elem";
+                 push @rows,
+                     $result_source->resultset->find( { $pk => $elem } );
+             }
+@@ -335,6 +345,8 @@ sub _update_relation {
+ 
+     #warn "RELINFO for $name: " . Dumper($info); use Data::Dumper;
+ 
++    my @related_pks = $related_resultset->result_source->primary_columns;
++
+     # the only valid datatype for a has_many rels is an arrayref
+     if ( $info->{attrs}{accessor} eq 'multi' ) {
+ 
+@@ -360,8 +372,6 @@ sub _update_relation {
+ 
+         #warn "\tcreated and updated related rows\n";
+ 
+-        my @related_pks = $related_resultset->result_source->primary_columns;
+-
+         my $rs_rel_delist = $object->$name;
+ 
+         # foreign table has a single pk column
+@@ -434,20 +444,17 @@ sub _update_relation {
+                 );
+             }
+         }
+-        else {
+-            $sub_object = $related_resultset->find($updates)
+-                unless (
+-                !$updates
+-                && ( exists $info->{attrs}{join_type}
+-                    && $info->{attrs}{join_type} eq 'LEFT' )
+-                );
++        elsif ( defined $updates ) {
++            warn "(14) updates => $updates";
++            $sub_object = $related_resultset->find($updates);
+         }
++        warn "(15) set_from_related";
++        # might be set to 'undef'? So what is this test looking for?
+         $object->set_from_related( $name, $sub_object )
+             unless (
+-               !$sub_object
+-            && !$updates
+-            && ( exists $info->{attrs}{join_type}
+-                && $info->{attrs}{join_type} eq 'LEFT' )
++               !$sub_object ||
++               ( !$updates && ( exists $info->{attrs}{join_type}
++                && $info->{attrs}{join_type} eq 'LEFT' ))
+             );
+     }
+     else {
+diff --git a/t/lib/DBICTest.pm b/t/lib/DBICTest.pm
+index e4b9b76..91c8a55 100755
+--- a/t/lib/DBICTest.pm
++++ b/t/lib/DBICTest.pm
+@@ -234,7 +234,7 @@ sub populate_schema {
+     ]);
+ 
+     $schema->populate('CD_to_Producer', [
+-        [ qw/cd producer/ ],
++        [ qw/cdid producerid/ ],
+         [ 1, 1 ],
+         [ 1, 2 ],
+         [ 1, 3 ],
+diff --git a/t/lib/DBICTest/Schema/CD_to_Producer.pm b/t/lib/DBICTest/Schema/CD_to_Producer.pm
+index 8028c7b..dc9d5a9 100644
+--- a/t/lib/DBICTest/Schema/CD_to_Producer.pm
++++ b/t/lib/DBICTest/Schema/CD_to_Producer.pm
+@@ -5,19 +5,19 @@ use base 'DBIx::Class::Core';
+ 
+ __PACKAGE__->table('cd_to_producer');
+ __PACKAGE__->add_columns(
+-  cd => { data_type => 'integer' },
+-  producer => { data_type => 'integer' },
++  cdid => { data_type => 'integer' },
++  producerid => { data_type => 'integer' },
+ );
+-__PACKAGE__->set_primary_key(qw/cd producer/);
++__PACKAGE__->set_primary_key(qw/cdid producerid/);
+ 
+ __PACKAGE__->belongs_to(
+   'cd', 'DBICTest::Schema::CD',
+-  { 'foreign.cdid' => 'self.cd' }
++  { 'foreign.cdid' => 'self.cdid' }
+ );
+ 
+ __PACKAGE__->belongs_to(
+   'producer', 'DBICTest::Schema::Producer',
+-  { 'foreign.producerid' => 'self.producer' },
++  { 'foreign.producerid' => 'self.producerid' },
+   { on_delete => undef, on_update => undef },
+ );
+ 

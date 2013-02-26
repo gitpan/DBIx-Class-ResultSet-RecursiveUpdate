@@ -5,6 +5,8 @@ META.json
 META.yml
 Makefile.PL
 README
+basic.out
+diff
 dist.ini
 lib/DBIx/Class/ResultSet/RecursiveUpdate.pm
 t/00load.t
@@ -134,3 +136,4 @@ t_dbic/lib/DBICTest/Util.pm
 t_dbic/lib/DBICTest/Util/OverrideRequire.pm
 t_dbic/lib/sqlite.sql
 t_dbic/might_have.t
+todo.txt

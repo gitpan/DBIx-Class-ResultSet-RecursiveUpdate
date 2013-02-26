@@ -1,0 +1,4 @@
+does not handle cases where the column and relationship name is the same
+correctly. See UNDEF warnings with ENV flag removed.
+Logic cannot possibly be correct for some of the cases in single rels.
+Can a ->find(undef) do *anything*?
