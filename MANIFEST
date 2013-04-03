@@ -9,6 +9,8 @@ basic.out
 diff
 dist.ini
 lib/DBIx/Class/ResultSet/RecursiveUpdate.pm
+lukast.patch
+new.diff
 t/00load.t
 t/01_basic.t
 t/conditional_has_many.t
@@ -37,6 +39,7 @@ t/lib/DBSchema/Result/Viewing.pm
 t/lib/DBSchemaBase.pm
 t/lib/DBSchemaMoose.pm
 t/lib/DBSchemaMoose/ResultSet.pm
+t/lib/DebugObject.pm
 t/lib/MySchema.pm
 t/lib/MySchema/Test.pm
 t/lib/TwoPkHasManyDB/Schema.pm
@@ -54,6 +57,7 @@ t/release-portability.t
 t/release-synopsis.t
 t/release-unused-vars.t
 t/twopk_has_many.t
+t/update_introspectable_m2m.t
 t/var/dvdzbr.db
 t/var/placeholder
 t_dbic/lib/DBICTest.pm

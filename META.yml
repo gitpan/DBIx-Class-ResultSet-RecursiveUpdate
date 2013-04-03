@@ -33,7 +33,7 @@ requires:
   SQL::Translator: 0.11006
 resources:
   repository: git://github.com/gshank/dbix-class-resultset-recursiveupdate
-version: 0.27
+version: 0.28
 x_Dist_Zilla:
   plugins:
     -

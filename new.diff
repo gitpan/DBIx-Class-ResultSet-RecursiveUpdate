@@ -1,0 +1,642 @@
+diff --git a/lib/DBIx/Class/ResultSet/RecursiveUpdate.pm b/lib/DBIx/Class/ResultSet/RecursiveUpdate.pm
+index 478d900..802ba87 100644
+--- a/lib/DBIx/Class/ResultSet/RecursiveUpdate.pm
++++ b/lib/DBIx/Class/ResultSet/RecursiveUpdate.pm
+@@ -12,11 +12,13 @@ sub recursive_update {
+ 
+     my $fixed_fields;
+     my $unknown_params_ok;
++    my $m2m_force_set_rel;
+ 
+     # 0.21+ api
+     if ( defined $attrs && ref $attrs eq 'HASH' ) {
+         $fixed_fields      = $attrs->{fixed_fields};
+         $unknown_params_ok = $attrs->{unknown_params_ok};
++        $m2m_force_set_rel = $attrs->{m2m_force_set_rel};
+     }
+ 
+     # pre 0.21 api
+@@ -29,6 +31,7 @@ sub recursive_update {
+         updates           => $updates,
+         fixed_fields      => $fixed_fields,
+         unknown_params_ok => $unknown_params_ok,
++        m2m_force_set_rel => $m2m_force_set_rel,
+     );
+ }
+ 
+@@ -41,9 +44,10 @@ use Try::Tiny;
+ sub recursive_update {
+     my %params = @_;
+     my ( $self, $updates, $fixed_fields, $object, $resolved, $if_not_submitted,
+-        $unknown_params_ok )
++        $unknown_params_ok, $m2m_force_set_rel )
+         = @params{
+-        qw/resultset updates fixed_fields object resolved if_not_submitted unknown_params_ok/ };
++        qw/resultset updates fixed_fields object resolved if_not_submitted unknown_params_ok m2m_force_set_rel/
++        };
+     $resolved ||= {};
+     $ENV{DBIC_NULLABLE_KEY_NOWARN} = 1;
+ 
+@@ -68,8 +72,7 @@ sub recursive_update {
+ 
+     my @pks = $source->primary_columns;
+     if ( !defined $object &&
+-        all { exists $updates->{$_} } @pks )
+-    {
++        all { exists $updates->{$_} } @pks ) {
+         my @pks = map { $updates->{$_} } @pks;
+         $object = $self->find( @pks, { key => 'primary' } );
+     }
+@@ -121,8 +124,7 @@ sub recursive_update {
+ 
+         # columns
+         if ( exists $columns_by_accessor{$name} &&
+-            !( $source->has_relationship($name) && ref( $updates->{$name} ) ) )
+-        {
++            !( $source->has_relationship($name) && ref( $updates->{$name} ) ) ) {
+             $columns{$name} = $updates->{$name};
+             next;
+         }
+@@ -141,7 +143,28 @@ sub recursive_update {
+ 
+         # many-to-many helper accessors
+         if ( is_m2m( $self, $name ) ) {
+-            $m2m_accessors{$name} = $updates->{$name};
++            # Transform m2m data into recursive has_many data
++            # if IntrospectableM2M is in use.
++            #
++            # This removes the overhead related to deleting and
++            # re-adding all relationships.
++            if ( !$m2m_force_set_rel && $source->result_class->can('_m2m_metadata') ) {
++                my $meta        = $source->result_class->_m2m_metadata->{$name};
++                my $bridge_rel  = $meta->{relation};
++                my $foreign_rel = $meta->{foreign_relation};
++
++                $post_updates{$bridge_rel} = [
++                    map {
++                        { $foreign_rel => $_ }
++                        } @{ $updates->{$name} }
++                ];
++            }
++            # Fall back to set_$rel if IntrospectableM2M
++            # is not available. (removing and re-adding all relationships)
++            else {
++                $m2m_accessors{$name} = $updates->{$name};
++            }
++
+             next;
+         }
+ 
+@@ -338,8 +361,7 @@ sub _update_relation {
+         }
+     }
+     elsif ( $info->{attrs}{accessor} eq 'single' ||
+-        $info->{attrs}{accessor} eq 'filter' )
+-    {
++        $info->{attrs}{accessor} eq 'filter' ) {
+         my $sub_object;
+         if ( ref $updates ) {
+             if ( blessed($updates) && $updates->isa('DBIx::Class::Row') ) {
+@@ -396,8 +418,7 @@ sub is_m2m {
+     my $object = $self->new_result( {} );
+     if ( $object->can($relation) and
+         !$self->result_source->has_relationship($relation) and
+-        $object->can( 'set_' . $relation ) )
+-    {
++        $object->can( 'set_' . $relation ) ) {
+         return 1;
+     }
+     return;
+@@ -425,8 +446,7 @@ sub _delete_empty_auto_increment {
+             $object->result_source->column_info($col)->{is_auto_increment} and
+             ( !defined $object->{_column_data}{$col} or
+                 $object->{_column_data}{$col} eq '' )
+-            )
+-        {
++            ) {
+             delete $object->{_column_data}{$col};
+         }
+     }
+@@ -735,6 +755,24 @@ of undef or an empty array, all existing related rows are unlinked.
+ When the array contains elements they are updated if they exist, created when
+ not and deleted if not included.
+ 
++RecursiveUpdate defaults to
++calling 'set_$rel' to update many-to-many relationships.
++See L<DBIx::Class::Relationship/many_to_many> for details.
++set_$rel effectively removes and re-adds all relationship data,
++even if the set of related items did not change at all.
++
++If L<DBIx::Class::IntrospectableM2M> is in use, RecursiveUpdate will
++look up the corresponding has_many relationship and use this to recursively
++update the many-to-many relationship.
++
++While both mechanisms have the same final result, deleting and re-adding
++all relationship data can have unwanted consequences if triggers or
++method modifiers are defined or logging modules like L<DBIx::Class::AuditLog>
++are in use.
++
++The traditional "set_$rel" behaviour can be forced by passing
++"m2m_force_set_rel => 1" to recursive_update.
++
+ See L</is_m2m> for many-to-many pseudo relationship detection.
+ 
+ Updating the relationship:
+@@ -790,6 +828,15 @@ Clearing the relationship:
+         tags => [],
+     });
+ 
++Make sure that set_$rel used to update many-to-many relationships
++even if IntrospectableM2M is loaded:
++
++    my $dvd = $dvd_rs->recursive_update( {
++        id   => 1,
++        tags => [1, 2],
++    },
++    { m2m_force_set_rel => 1 },
++    );
+ 
+ =head1 INTERFACE
+ 
+diff --git a/t/conditional_has_many.t b/t/conditional_has_many.t
+index 68aa35e..985a04f 100644
+--- a/t/conditional_has_many.t
++++ b/t/conditional_has_many.t
+@@ -12,7 +12,8 @@ my $schema = AnotherTestDB::OnePK::Schema->connect('dbi:SQLite:dbname=:memory:')
+ isa_ok $schema, 'DBIx::Class::Schema';
+ 
+ lives_ok( sub{
+-	$schema->deploy({add_drop_table => 1});
++	#$schema->deploy({add_drop_table => 1});
++	$schema->deploy();
+ 	$schema->populate('Item', [
+ 		[ qw/idcol/ ],
+ 		[ 1 ],
+@@ -52,7 +53,8 @@ $schema = AnotherTestDB::TwoPK::Schema->connect('dbi:SQLite:dbname=:memory:');
+ isa_ok $schema, 'DBIx::Class::Schema';
+ 
+ lives_ok( sub{
+-	$schema->deploy({add_drop_table => 1});
++	#$schema->deploy({add_drop_table => 1});
++	$schema->deploy();
+ 	$schema->populate('Item', [
+ 		[ qw/idcol/ ],
+ 		[ 1 ],
+diff --git a/t/lib/DebugObject.pm b/t/lib/DebugObject.pm
+new file mode 100644
+index 0000000..9ab2876
+--- /dev/null
++++ b/t/lib/DebugObject.pm
+@@ -0,0 +1,33 @@
++
++package DebugObject;
++
++sub new {
++	my $class = shift;
++	return bless {messages => []}, $class;
++}
++
++sub print{
++	my ($self, @messages) = @_;
++	push @{$self->{messages}}, @messages;
++}
++
++sub clear{
++	$_[0]->{messages} = [];
++}
++
++sub grep_messages{
++	my ($self, $grep) = @_;
++	return grep { $_ =~ qr/$grep/ } @{$self->{messages}};
++}
++
++sub get_messages{
++	$_[0]->{messages};
++}
++
++
++sub count_messages{
++	my ($self, $grep) = @_;
++	return scalar( defined $grep ? $self->grep_messages($grep) : $self->get_messages);
++}
++
++1;
+diff --git a/t/twopk_has_many.t b/t/twopk_has_many.t
+index 003bcc6..564cf72 100644
+--- a/t/twopk_has_many.t
++++ b/t/twopk_has_many.t
+@@ -13,7 +13,7 @@ my $schema = TwoPkHasManyDB::Schema->connect('dbi:SQLite:dbname=:memory:');
+ isa_ok $schema, 'DBIx::Class::Schema';
+ 
+ lives_ok( sub{
+-	$schema->deploy({add_drop_table => 1});
++	$schema->deploy();
+ 	$schema->populate('Item', [
+ 		[ qw/id/ ],
+ 		[ 1 ],
+diff --git a/t/update_introspectable_m2m.t b/t/update_introspectable_m2m.t
+new file mode 100644
+index 0000000..5db7b2b
+--- /dev/null
++++ b/t/update_introspectable_m2m.t
+@@ -0,0 +1,400 @@
++# Note:
++#
++# I am using DebugObject in t/lib to catch the DBIC debug output
++# and regexes to check the messages in order to find out what RU
++# realy did.
++#
++# I think that this is a bad Idea. If the queries produced by
++# DBIC change in the future, these tests might fail even though
++# DBIC and RU still behave the same.
++#
++# I currently have no better idea how to find out weather RU
++# called set_$rel for M2Ms or not.
++# (It shouldn't if IntrospectableM2M is in use)
++#
++# I prefered this solution over monkeypatching DBIC, which was my
++# second idea. Any hints are highly welcome!
++#
++# - lukast
++
++
++use strict;
++use warnings;
++
++use Test::More;
++use DBIx::Class::ResultSet::RecursiveUpdate;
++
++use lib 't/lib';
++use DBSchema;
++use DebugObject;
++
++my $schema = DBSchema->get_test_schema();
++my $storage = $schema->storage;
++isa_ok $schema, "DBIx::Class::Schema";
++isa_ok $storage, "DBIx::Class::Storage";
++
++my $dbic_trace = DebugObject->new;
++$storage->debug(1);
++$storage->debugfh($dbic_trace);
++
++my $dvd_rs  = $schema->resultset('Dvd');
++my $tag_rs = $schema->resultset('Tag');
++
++ok $dvd_rs->result_class->can("_m2m_metadata"), "dvd-rs has m2m metadata";
++ok ! $tag_rs->result_class->can("_m2m_metadata"), "tag-rs has no m2m metadata";
++
++##############################################
++# testing m2m updates with IntrospectableM2M #
++##############################################
++
++my $dvd_item = $dvd_rs->first;
++
++
++#
++# adding one
++#
++
++my $tag_ids = [$dvd_item->tags_rs->get_column("id")->all];
++
++push @$tag_ids, 1;
++
++
++my %updates = (
++	id => $dvd_item->id,
++	tags => $tag_ids,
++);
++
++$dbic_trace->clear;
++
++$dvd_rs->recursive_update(\%updates);
++
++ok ! $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( dvd = \? \)'), "add one: update did not remove all tags'";
++is $dbic_trace->count_messages("^DELETE FROM dvdtag "), 1, "add one: update executed one delete";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 1, "add one: update executed one insert";
++
++is $dvd_item->tags_rs->count, 3, "add one: DVD item has 3 tags";
++
++#
++# removing one
++#
++
++shift @$tag_ids;
++
++%updates = (
++	id => $dvd_item->id,
++	tags => $tag_ids,
++);
++
++$dbic_trace->clear;
++
++$dvd_rs->recursive_update(\%updates);
++
++ok ! $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( dvd = \? \)'), "remove one: update did not remove all tags'";
++is $dbic_trace->count_messages("^DELETE FROM dvdtag "), 1, "remove one: update executed one delete";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 0, "remove one: update executed no insert";
++
++is $dvd_item->tags_rs->count, 2, "remove one: DVD item has 2 tags";
++
++
++#
++# adding recursive
++#
++
++#push @$tag_ids, ( 4, 5, 6 );
++
++%updates = (
++	id => $dvd_item->id,
++	tags => [
++            (map { { name => $_->name, id => $_->id } } $dvd_item->tags->all) ,
++            { name => "winnie" },
++            { name => "fanny" },
++            { name => "sammy" },
++    ],
++);
++
++$dbic_trace->clear;
++
++$dvd_rs->recursive_update(\%updates);
++
++ok ! $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( dvd = \? \)'), "add several: update did not remove all tags'";
++is $dbic_trace->count_messages("^DELETE FROM dvdtag "), 1, "add several: update executed one delete";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 3, "add several: update executed three inserts in dvdtag";
++is $dbic_trace->count_messages("^INSERT INTO tag "), 3, "add several: update executed three inserts in tag";
++
++is $dvd_item->tags_rs->count, 5, "add several: DVD item has 5 tags";
++
++#
++# updating recursive
++#
++
++#push @$tag_ids, ( 4, 5, 6 );
++
++%updates = (
++	id => $dvd_item->id,
++	tags => [
++            (map { { name => $_->name."_Changed", id => $_->id } } $dvd_item->tags->all) ,
++    ],
++);
++
++$dbic_trace->clear;
++
++$dvd_rs->recursive_update(\%updates);
++
++ok ! $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( dvd = \? \)'), "add several: update did not remove all tags'";
++is $dbic_trace->count_messages("^DELETE FROM dvdtag "), 1, "add several: update executed one delete";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 0, "add several: update executed no inserts in dvdtag";
++is $dbic_trace->count_messages("^UPDATE tag "), 5, "add several: update executed five updates in tag";
++
++is $dvd_item->tags_rs->count, 5, "add several: DVD item has 5 tags";
++
++
++#
++# updating and removing
++#
++
++
++%updates = (
++	id => $dvd_item->id,
++	tags => [
++            (map { { name => $_->name."More", id => $_->id } } $dvd_item->tags->all) ,
++    ],
++);
++
++$updates{tags} = [splice @{$updates{tags}}, 2, 3];
++
++$dbic_trace->clear;
++
++$dvd_rs->recursive_update(\%updates);
++
++ok ! $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( dvd = \? \)'), "add several: update did not remove all tags'";
++is $dbic_trace->count_messages("^DELETE FROM dvdtag "), 1, "add several: update executed one delete";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 0, "add several: update executed no inserts in dvdtag";
++is $dbic_trace->count_messages("^UPDATE tag "), 3, "add several: update executed three updates in tag";
++
++is $dvd_item->tags_rs->count, 3, "add several: DVD item has 3 tags";
++
++
++#
++# updating and adding
++#
++
++
++%updates = (
++	id => $dvd_item->id,
++	tags => [
++            (map { { name => $_->name."More", id => $_->id } } $dvd_item->tags->all) ,
++            { name => "rob" },
++            { name => "bot" },
++    ],
++);
++
++
++$dbic_trace->clear;
++
++$dvd_rs->recursive_update(\%updates);
++
++ok ! $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( dvd = \? \)'), "add several: update did not remove all tags'";
++is $dbic_trace->count_messages("^DELETE FROM dvdtag "), 1, "add several: update executed one delete";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 2, "add several: update executed two inserts in dvdtag";
++is $dbic_trace->count_messages("^UPDATE tag "), 3, "add several: update executed three updates in tag";
++
++is $dvd_item->tags_rs->count, 5, "add several: DVD item has 5 tags";
++
++
++#
++# removing several
++#
++
++$tag_ids = [4,5];
++%updates = (
++	id => $dvd_item->id,
++	tags => $tag_ids,
++);
++
++$dbic_trace->clear;
++
++$dvd_rs->recursive_update(\%updates);
++
++ok ! $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( dvd = \? \)'), "remove several: update did not remove all tags'";
++is $dbic_trace->count_messages("^DELETE FROM dvdtag "), 1, "remove several: update executed one delete";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 0, "remove several: update executed no insert";
++
++is $dvd_item->tags_rs->count, 2, "remove several: DVD item has 2 tags";
++
++
++#
++# empty arrayref
++#
++
++$tag_ids = [];
++%updates = (
++	id => $dvd_item->id,
++	tags => $tag_ids,
++);
++
++$dbic_trace->clear;
++
++$dvd_rs->recursive_update(\%updates);
++
++ok $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( dvd = \? \)'), "remove all: update did remove all tags'";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 0, "remove all: update executed no insert";
++
++is $dvd_item->tags_rs->count, 0, "remove all: DVD item has no tags";
++
++#
++# old set_$rel behaviour
++#
++
++$tag_ids = [2,4];
++%updates = (
++	id => $dvd_item->id,
++	tags => $tag_ids,
++);
++
++$dbic_trace->clear;
++
++$dvd_rs->recursive_update(\%updates, {m2m_force_set_rel => 1});
++
++ok $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( dvd = \? \)'), "remove several: update did remove all tags'";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 2, "remove several: update executed 2 insert";
++
++is $dvd_item->tags_rs->count, 2, "remove several: DVD item has 2 tags";
++
++# doint this 2 times to test identical behaviour
++$tag_ids = [2,4];
++%updates = (
++	id => $dvd_item->id,
++	tags => $tag_ids,
++);
++
++$dbic_trace->clear;
++
++$dvd_rs->recursive_update(\%updates, {m2m_force_set_rel => 1});
++
++ok $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( dvd = \? \)'), "remove several: update did remove all tags'";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 2, "remove several: update executed 2 insert";
++
++is $dvd_item->tags_rs->count, 2, "remove several: DVD item has 2 tags";
++
++#################################################
++# testing m2m updates without IntrospectableM2M #
++#################################################
++
++my $tag_item = $tag_rs->first;
++
++
++#
++# adding one
++#
++
++my $dvd_ids = [$tag_item->dvds_rs->get_column("dvd_id")->all];
++
++push @$dvd_ids, 1;
++
++
++%updates = (
++	id => $tag_item->id,
++	dvds => $dvd_ids,
++);
++
++$dbic_trace->clear;
++
++$tag_rs->recursive_update(\%updates);
++
++ok $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( tag = \? \)'), "add one: update did remove all dvds'";
++is $dbic_trace->count_messages("^DELETE FROM dvdtag "), 1, "add one: update executed one delete";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 3, "add one: update executed three insert";
++
++is $tag_item->dvds_rs->count, 3, "add one: tag item has 3 dvds";
++
++#
++# removing one
++#
++
++shift @$dvd_ids;
++
++%updates = (
++	id => $tag_item->id,
++	dvds => $dvd_ids,
++);
++
++$dbic_trace->clear;
++
++$tag_rs->recursive_update(\%updates);
++
++ok $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( tag = \? \)'), "remove one: update did remove all dvds'";
++is $dbic_trace->count_messages("^DELETE FROM dvdtag "), 1, "remove one: update executed one delete";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 2, "remove one: update executed two insert";
++
++is $tag_item->dvds_rs->count, 2, "remove one: tag item has 2 dvds";
++
++
++#
++# adding recursive
++#
++
++#push @$dvd_ids, ( 4, 5, 6 );
++
++%updates = (
++	id => $tag_item->id,
++	dvds => [
++            (map { { name => $_->name, id => $_->id } } $tag_item->dvds->all) ,
++            { name => "winnie", owner => 1 },
++            { name => "fanny" , owner => 1},
++            { name => "sammy" , owner => 1},
++    ],
++);
++
++$dbic_trace->clear;
++
++$tag_rs->recursive_update(\%updates);
++
++ok  $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( tag = \? \)'), "add several: update did remove all dvds'";
++is $dbic_trace->count_messages("^DELETE FROM dvdtag "), 1, "add several: update executed one delete";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 5, "add several: update executed five inserts in dvdtag";
++is $dbic_trace->count_messages("^INSERT INTO dvd "), 3, "add several: update executed three inserts in dvd";
++
++is $tag_item->dvds_rs->count, 5, "add several: tag item has 5 dvds";
++
++
++#
++# removing several
++#
++
++$dvd_ids = [3,5];
++%updates = (
++	id => $tag_item->id,
++	dvds => $dvd_ids,
++);
++
++$dbic_trace->clear;
++
++$tag_rs->recursive_update(\%updates);
++
++ok $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( tag = \? \)'), "remove several: update did remove all dvds'";
++is $dbic_trace->count_messages("^DELETE FROM dvdtag "), 1, "remove several: update executed one delete";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 2, "remove several: update executed two insert";
++
++is $tag_item->dvds_rs->count, 2, "remove several: tag item has 2 dvds";
++
++
++#
++# empty arrayref
++#
++
++$dvd_ids = [];
++%updates = (
++	id => $tag_item->id,
++	dvds => $dvd_ids,
++);
++
++$dbic_trace->clear;
++
++$tag_rs->recursive_update(\%updates);
++
++ok $dbic_trace->count_messages('^DELETE FROM dvdtag WHERE \( tag = \? \)'), "remove all: update did remove all dvds'";
++is $dbic_trace->count_messages("^INSERT INTO dvdtag "), 0, "remove all: update executed no insert";
++
++is $tag_item->dvds_rs->count, 0, "remove all: tag item has no dvds";
++
++done_testing;

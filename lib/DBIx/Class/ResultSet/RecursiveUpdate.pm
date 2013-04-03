@@ -3,7 +3,7 @@ use warnings;
 
 package DBIx::Class::ResultSet::RecursiveUpdate;
 {
-  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.27';
+  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.28';
 }
 
 # ABSTRACT: like update_or_create - but recursive
@@ -15,11 +15,13 @@ sub recursive_update {
 
     my $fixed_fields;
     my $unknown_params_ok;
+    my $m2m_force_set_rel;
 
     # 0.21+ api
     if ( defined $attrs && ref $attrs eq 'HASH' ) {
         $fixed_fields      = $attrs->{fixed_fields};
         $unknown_params_ok = $attrs->{unknown_params_ok};
+        $m2m_force_set_rel = $attrs->{m2m_force_set_rel};
     }
 
     # pre 0.21 api
@@ -32,12 +34,13 @@ sub recursive_update {
         updates           => $updates,
         fixed_fields      => $fixed_fields,
         unknown_params_ok => $unknown_params_ok,
+        m2m_force_set_rel => $m2m_force_set_rel,
     );
 }
 
 package DBIx::Class::ResultSet::RecursiveUpdate::Functions;
 {
-  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.27';
+  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.28';
 }
 use Carp::Clan qw/^DBIx::Class|^HTML::FormHandler|^Try::Tiny/;
 use Scalar::Util qw( blessed );
@@ -47,9 +50,10 @@ use Try::Tiny;
 sub recursive_update {
     my %params = @_;
     my ( $self, $updates, $fixed_fields, $object, $resolved, $if_not_submitted,
-        $unknown_params_ok )
+        $unknown_params_ok, $m2m_force_set_rel )
         = @params{
-        qw/resultset updates fixed_fields object resolved if_not_submitted unknown_params_ok/ };
+        qw/resultset updates fixed_fields object resolved if_not_submitted unknown_params_ok m2m_force_set_rel/
+        };
     $resolved ||= {};
     $ENV{DBIC_NULLABLE_KEY_NOWARN} = 1;
 
@@ -72,10 +76,10 @@ sub recursive_update {
         return $updates;
     }
 
+    my @pks = $source->primary_columns;
     if ( !defined $object &&
-        all { exists $updates->{$_} } $self->result_source->primary_columns )
-    {
-        my @pks = map { $updates->{$_} } $self->result_source->primary_columns;
+        all { exists $updates->{$_} } @pks ) {
+        my @pks = map { $updates->{$_} } @pks;
         $object = $self->find( @pks, { key => 'primary' } );
     }
     elsif ( !defined $object && exists $updates->{id} ) {
@@ -88,7 +92,7 @@ sub recursive_update {
     # the updates hashref might contain the pk columns
     # but with an undefined value
     my @missing =
-        grep { !defined $updates->{$_} && !exists $fixed_fields{$_} } $source->primary_columns;
+        grep { !defined $updates->{$_} && !exists $fixed_fields{$_} } @pks;
 
     if ( !defined $object && scalar @missing == 0 ) {
         $object = $self->find( $updates, { key => 'primary' } );
@@ -126,8 +130,7 @@ sub recursive_update {
 
         # columns
         if ( exists $columns_by_accessor{$name} &&
-            !( $source->has_relationship($name) && ref( $updates->{$name} ) ) )
-        {
+            !( $source->has_relationship($name) && ref( $updates->{$name} ) ) ) {
             $columns{$name} = $updates->{$name};
             next;
         }
@@ -146,7 +149,28 @@ sub recursive_update {
 
         # many-to-many helper accessors
         if ( is_m2m( $self, $name ) ) {
-            $m2m_accessors{$name} = $updates->{$name};
+            # Transform m2m data into recursive has_many data
+            # if IntrospectableM2M is in use.
+            #
+            # This removes the overhead related to deleting and
+            # re-adding all relationships.
+            if ( !$m2m_force_set_rel && $source->result_class->can('_m2m_metadata') ) {
+                my $meta        = $source->result_class->_m2m_metadata->{$name};
+                my $bridge_rel  = $meta->{relation};
+                my $foreign_rel = $meta->{foreign_relation};
+
+                $post_updates{$bridge_rel} = [
+                    map {
+                        { $foreign_rel => $_ }
+                        } @{ $updates->{$name} }
+                ];
+            }
+            # Fall back to set_$rel if IntrospectableM2M
+            # is not available. (removing and re-adding all relationships)
+            else {
+                $m2m_accessors{$name} = $updates->{$name};
+            }
+
             next;
         }
 
@@ -193,7 +217,7 @@ sub recursive_update {
         # TODO: only first pk col is used
         my ($pk) = _get_pk_for_related( $self, $name );
         my @rows;
-        my $result_source = $object->$name->result_source;
+        my $rel_source = $object->$name->result_source;
         my @updates;
         if ( defined $value && ref $value eq 'ARRAY' ) {
             @updates = @{$value};
@@ -211,12 +235,12 @@ sub recursive_update {
             elsif ( ref $elem eq 'HASH' ) {
                 push @rows,
                     recursive_update(
-                    resultset => $result_source->resultset,
+                    resultset => $rel_source->resultset,
                     updates   => $elem
                     );
             }
             else {
-                push @rows, $result_source->resultset->find( { $pk => $elem } );
+                push @rows, $rel_source->resultset->find( { $pk => $elem } );
             }
         }
         my $set_meth = 'set_' . $name;
@@ -343,8 +367,7 @@ sub _update_relation {
         }
     }
     elsif ( $info->{attrs}{accessor} eq 'single' ||
-        $info->{attrs}{accessor} eq 'filter' )
-    {
+        $info->{attrs}{accessor} eq 'filter' ) {
         my $sub_object;
         if ( ref $updates ) {
             if ( blessed($updates) && $updates->isa('DBIx::Class::Row') ) {
@@ -401,8 +424,7 @@ sub is_m2m {
     my $object = $self->new_result( {} );
     if ( $object->can($relation) and
         !$self->result_source->has_relationship($relation) and
-        $object->can( 'set_' . $relation ) )
-    {
+        $object->can( 'set_' . $relation ) ) {
         return 1;
     }
     return;
@@ -430,8 +452,7 @@ sub _delete_empty_auto_increment {
             $object->result_source->column_info($col)->{is_auto_increment} and
             ( !defined $object->{_column_data}{$col} or
                 $object->{_column_data}{$col} eq '' )
-            )
-        {
+            ) {
             delete $object->{_column_data}{$col};
         }
     }
@@ -439,16 +460,16 @@ sub _delete_empty_auto_increment {
 
 sub _get_pk_for_related {
     my ( $self, $relation ) = @_;
-    my $result_source;
+    my $source;
     if ( $self->result_source->has_relationship($relation) ) {
-        $result_source = $self->result_source->related_source($relation);
+        $source = $self->result_source->related_source($relation);
     }
 
     # many to many case
     if ( is_m2m( $self, $relation ) ) {
-        $result_source = get_m2m_source( $self, $relation );
+        $source = get_m2m_source( $self, $relation );
     }
-    return $result_source->primary_columns;
+    return $source->primary_columns;
 }
 
 # This function determines whether a relationship should be done before or
@@ -515,7 +536,7 @@ DBIx::Class::ResultSet::RecursiveUpdate - like update_or_create - but recursive
 
 =head1 VERSION
 
-version 0.27
+version 0.28
 
 =head1 SYNOPSIS
 
@@ -749,6 +770,24 @@ of undef or an empty array, all existing related rows are unlinked.
 When the array contains elements they are updated if they exist, created when
 not and deleted if not included.
 
+RecursiveUpdate defaults to
+calling 'set_$rel' to update many-to-many relationships.
+See L<DBIx::Class::Relationship/many_to_many> for details.
+set_$rel effectively removes and re-adds all relationship data,
+even if the set of related items did not change at all.
+
+If L<DBIx::Class::IntrospectableM2M> is in use, RecursiveUpdate will
+look up the corresponding has_many relationship and use this to recursively
+update the many-to-many relationship.
+
+While both mechanisms have the same final result, deleting and re-adding
+all relationship data can have unwanted consequences if triggers or
+method modifiers are defined or logging modules like L<DBIx::Class::AuditLog>
+are in use.
+
+The traditional "set_$rel" behaviour can be forced by passing
+"m2m_force_set_rel => 1" to recursive_update.
+
 See L</is_m2m> for many-to-many pseudo relationship detection.
 
 Updating the relationship:
@@ -803,6 +842,16 @@ Clearing the relationship:
         id   => 1,
         tags => [],
     });
+
+Make sure that set_$rel used to update many-to-many relationships
+even if IntrospectableM2M is loaded:
+
+    my $dvd = $dvd_rs->recursive_update( {
+        id   => 1,
+        tags => [1, 2],
+    },
+    { m2m_force_set_rel => 1 },
+    );
 
 =head1 INTERFACE
 
