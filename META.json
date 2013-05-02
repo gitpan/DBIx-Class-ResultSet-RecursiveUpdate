@@ -41,7 +41,6 @@
       },
       "test" : {
          "requires" : {
-            "DBIx::Class::InflateColumn::FS" : "0",
             "Test::More" : "0.88",
             "Test::Trap" : "v0.2.2",
             "Test::Warn" : "0.20"
@@ -56,7 +55,7 @@
          "web" : "http://github.com/gshank/dbix-class-resultset-recursiveupdate"
       }
    },
-   "version" : "0.28",
+   "version" : "0.29",
    "x_Dist_Zilla" : {
       "plugins" : [
          {

@@ -12,7 +12,6 @@ my %WriteMakefileArgs = (
   "ABSTRACT" => "like update_or_create - but recursive",
   "AUTHOR" => "Zbigniew Lukasiak <zby\@cpan.org>, John Napiorkowski <jjnapiork\@cpan.org>, Alexander Hartmaier <abraxxa\@cpan.org>, Gerda Shank <gshank\@cpan.org>",
   "BUILD_REQUIRES" => {
-    "DBIx::Class::InflateColumn::FS" => 0,
     "Test::More" => "0.88",
     "Test::Trap" => "v0.2.2",
     "Test::Warn" => "0.20"
@@ -34,7 +33,7 @@ my %WriteMakefileArgs = (
     "Readonly" => "1.03",
     "SQL::Translator" => "0.11006"
   },
-  "VERSION" => "0.28",
+  "VERSION" => "0.29",
   "test" => {
     "TESTS" => "t/*.t"
   }
