@@ -3,7 +3,7 @@ use warnings;
 
 package DBIx::Class::ResultSet::RecursiveUpdate;
 {
-  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.29';
+  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.30';
 }
 
 # ABSTRACT: like update_or_create - but recursive
@@ -40,7 +40,7 @@ sub recursive_update {
 
 package DBIx::Class::ResultSet::RecursiveUpdate::Functions;
 {
-  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.29';
+  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.30';
 }
 use Carp::Clan qw/^DBIx::Class|^HTML::FormHandler|^Try::Tiny/;
 use Scalar::Util qw( blessed );
@@ -370,6 +370,13 @@ sub _update_relation {
         $info->{attrs}{accessor} eq 'filter' ) {
         my $sub_object;
         if ( ref $updates ) {
+        
+            my $no_new_object = 0;
+            my @pks = $related_resultset->result_source->primary_columns;
+            if ( all { exists $updates->{$_} } @pks ) {
+                $no_new_object = 1;
+            }
+            
             if ( blessed($updates) && $updates->isa('DBIx::Class::Row') ) {
                 $sub_object = $updates;
             }
@@ -379,14 +386,14 @@ sub _update_relation {
                 $sub_object = recursive_update(
                     resultset => $related_resultset,
                     updates   => $updates,
-                    object    => $object->$name
+                    $no_new_object ? () : (object => $object->$name),
                 );
             }
             else {
                 $sub_object = recursive_update(
                     resultset => $related_resultset,
                     updates   => $updates,
-                    resolved  => $resolved
+                    $no_new_object ? () : (resolved  => $resolved),
                 );
             }
         }
@@ -536,7 +543,7 @@ DBIx::Class::ResultSet::RecursiveUpdate - like update_or_create - but recursive
 
 =head1 VERSION
 
-version 0.29
+version 0.30
 
 =head1 SYNOPSIS
 
@@ -665,6 +672,16 @@ Clearing the relationship (only works if cols are nullable!):
     my $dvd = $dvd_rs->recursive_update( {
         id    => 1,
         owner => undef,
+    });
+
+Updating a relationship including its (full) primary key:
+
+    my $dvd = $dvd_rs->recursive_update( {
+        id    => 1,
+        owner => {
+            id   => 2,
+            name => "George",
+        },
     });
 
 =head2 Treatment of might_have relationships

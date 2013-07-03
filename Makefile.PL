@@ -31,9 +31,9 @@ my %WriteMakefileArgs = (
     "DateTime" => 0,
     "List::MoreUtils" => "0.22",
     "Readonly" => "1.03",
-    "SQL::Translator" => "0.11006"
+    "SQL::Translator" => "0.11016"
   },
-  "VERSION" => "0.29",
+  "VERSION" => "0.30",
   "test" => {
     "TESTS" => "t/*.t"
   }

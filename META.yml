@@ -29,10 +29,10 @@ requires:
   DateTime: 0
   List::MoreUtils: 0.22
   Readonly: 1.03
-  SQL::Translator: 0.11006
+  SQL::Translator: 0.11016
 resources:
   repository: git://github.com/gshank/dbix-class-resultset-recursiveupdate
-version: 0.29
+version: 0.30
 x_Dist_Zilla:
   plugins:
     -
