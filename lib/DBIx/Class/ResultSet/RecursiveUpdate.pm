@@ -3,7 +3,7 @@ use warnings;
 
 package DBIx::Class::ResultSet::RecursiveUpdate;
 {
-  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.30';
+  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.31';
 }
 
 # ABSTRACT: like update_or_create - but recursive
@@ -40,7 +40,7 @@ sub recursive_update {
 
 package DBIx::Class::ResultSet::RecursiveUpdate::Functions;
 {
-  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.30';
+  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.31';
 }
 use Carp::Clan qw/^DBIx::Class|^HTML::FormHandler|^Try::Tiny/;
 use Scalar::Util qw( blessed );
@@ -247,6 +247,9 @@ sub recursive_update {
         $object->$set_meth( \@rows );
     }
     for my $name ( keys %post_updates ) {
+        # I'm not sure why the following is necessary, but sometimes we get here
+        # and the $object doesn't have a pk, and discard_changes must be executed
+        $object->discard_changes;
         _update_relation( $self, $name, $post_updates{$name}, $object, $if_not_submitted );
     }
     delete $ENV{DBIC_NULLABLE_KEY_NOWARN};
@@ -276,6 +279,7 @@ sub _update_relation {
         unless $object->has_relationship($name);
 
     my $info = $object->result_source->relationship_info($name);
+    my $attrs = $info->{attrs};
 
     # get a related resultset without a condition
     my $related_resultset = $self->related_resultset($name)->result_source->resultset;
@@ -305,7 +309,7 @@ sub _update_relation {
         unless defined $if_not_submitted;
 
     # the only valid datatype for a has_many rels is an arrayref
-    if ( $info->{attrs}{accessor} eq 'multi' ) {
+    if ( $attrs->{accessor} eq 'multi' ) {
 
         # handle undef like empty arrayref
         $updates = []
@@ -366,21 +370,19 @@ sub _update_relation {
             $rs_rel_delist->update( \%update );
         }
     }
-    elsif ( $info->{attrs}{accessor} eq 'single' ||
-        $info->{attrs}{accessor} eq 'filter' ) {
+    elsif ( $attrs->{accessor} eq 'single' ||
+        $attrs->{accessor} eq 'filter' ) {
         my $sub_object;
         if ( ref $updates ) {
-        
             my $no_new_object = 0;
             my @pks = $related_resultset->result_source->primary_columns;
             if ( all { exists $updates->{$_} } @pks ) {
                 $no_new_object = 1;
             }
-            
             if ( blessed($updates) && $updates->isa('DBIx::Class::Row') ) {
                 $sub_object = $updates;
             }
-            elsif ( $info->{attrs}{accessor} eq 'single' &&
+            elsif ( $attrs->{accessor} eq 'single' &&
                 defined $object->$name )
             {
                 $sub_object = recursive_update(
@@ -401,17 +403,18 @@ sub _update_relation {
             $sub_object = $related_resultset->find($updates)
                 unless (
                 !$updates &&
-                ( exists $info->{attrs}{join_type} &&
-                    $info->{attrs}{join_type} eq 'LEFT' )
+                ( exists $attrs->{join_type} &&
+                    $attrs->{join_type} eq 'LEFT' )
                 );
         }
-        $object->set_from_related( $name, $sub_object )
-            unless (
-            !$sub_object &&
-            !$updates &&
-            ( exists $info->{attrs}{join_type} &&
-                $info->{attrs}{join_type} eq 'LEFT' )
-            );
+        my $join_type = $attrs->{join_type} || '';
+        # unmarked 'LEFT' join for belongs_to
+        my $might_belong_to =
+               ( $attrs->{accessor} eq 'single' || $attrs->{accessor} eq 'filter' ) &&
+               $attrs->{is_foreign_key_constraint};
+        unless ( !$sub_object && !$updates && !$might_belong_to && !$join_type eq 'LEFT' ) {
+            $object->set_from_related( $name, $sub_object );
+        }
     }
     else {
         $self->throw_exception(
@@ -534,8 +537,11 @@ sub _master_relation_cond {
 
 1;
 
+__END__
 
 =pod
+
+=encoding UTF-8
 
 =head1 NAME
 
@@ -543,7 +549,7 @@ DBIx::Class::ResultSet::RecursiveUpdate - like update_or_create - but recursive
 
 =head1 VERSION
 
-version 0.30
+version 0.31
 
 =head1 SYNOPSIS
 
@@ -934,7 +940,7 @@ None reported.
 The list of reported bugs can be viewed at L<http://rt.cpan.org/Public/Dist/Display.html?Name=DBIx-Class-ResultSet-RecursiveUpdate>.
 
 Please report any bugs or feature requests to
-C<bug-dbix-class-recursiveput@rt.cpan.org>, or through the web interface at
+C<bug-DBIx-Class-ResultSet-RecursiveUpdate@rt.cpan.org>, or through the web interface at
 L<http://rt.cpan.org>.
 
 =head1 AUTHORS
@@ -967,7 +973,3 @@ This is free software; you can redistribute it and/or modify it under
 the same terms as the Perl 5 programming language system itself.
 
 =cut
-
-
-__END__
-

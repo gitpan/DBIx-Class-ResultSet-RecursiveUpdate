@@ -81,7 +81,9 @@ t/lib/DBSchema/Result/Dvd.pm
 t/lib/DBSchema/Result/Dvdtag.pm
 t/lib/DBSchema/Result/LinerNotes.pm
 t/lib/DBSchema/Result/Onekey.pm
+t/lib/DBSchema/Result/Owner.pm
 t/lib/DBSchema/Result/Personality.pm
+t/lib/DBSchema/Result/Podcast.pm
 t/lib/DBSchema/Result/Role.pm
 t/lib/DBSchema/Result/Tag.pm
 t/lib/DBSchema/Result/Twokeys.pm
@@ -110,6 +112,7 @@ t/release-portability.t
 t/release-synopsis.t
 t/release-unused-vars.t
 t/twopk_has_many.t
+t/undef_pk.t
 t/update_introspectable_m2m.t
 t/var/dvdzbr.db
 t/var/placeholder

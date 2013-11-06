@@ -2,7 +2,7 @@
 #
 # I am using DebugObject in t/lib to catch the DBIC debug output
 # and regexes to check the messages in order to find out what RU
-# realy did.
+# really did.
 #
 # I think that this is a bad Idea. If the queries produced by
 # DBIC change in the future, these tests might fail even though
@@ -35,7 +35,7 @@ isa_ok $storage, "DBIx::Class::Storage";
 
 my $dbic_trace = DebugObject->new;
 $storage->debug(1);
-$storage->debugfh($dbic_trace);
+$storage->debugcb(sub { $dbic_trace->print($_[1]) });
 
 my $dvd_rs  = $schema->resultset('Dvd');
 my $tag_rs = $schema->resultset('Tag');
