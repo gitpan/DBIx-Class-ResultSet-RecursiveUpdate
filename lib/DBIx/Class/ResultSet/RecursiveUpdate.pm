@@ -2,10 +2,7 @@ use strict;
 use warnings;
 
 package DBIx::Class::ResultSet::RecursiveUpdate;
-{
-  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.31';
-}
-
+$DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.32';
 # ABSTRACT: like update_or_create - but recursive
 
 use base qw(DBIx::Class::ResultSet);
@@ -39,9 +36,7 @@ sub recursive_update {
 }
 
 package DBIx::Class::ResultSet::RecursiveUpdate::Functions;
-{
-  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.31';
-}
+$DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.32';
 use Carp::Clan qw/^DBIx::Class|^HTML::FormHandler|^Try::Tiny/;
 use Scalar::Util qw( blessed );
 use List::MoreUtils qw/ any all/;
@@ -82,9 +77,6 @@ sub recursive_update {
         my @pks = map { $updates->{$_} } @pks;
         $object = $self->find( @pks, { key => 'primary' } );
     }
-    elsif ( !defined $object && exists $updates->{id} ) {
-        $object = $self->find( $updates->{id}, { key => 'primary' } );
-    }
 
     my %fixed_fields = map { $_ => 1 } @$fixed_fields
         if $fixed_fields;
@@ -107,6 +99,14 @@ sub recursive_update {
 
     if ( !defined $object && scalar @missing == 0 ) {
         $object = $self->find( $updates, { key => 'primary' } );
+    }
+
+    # try to construct a new row object with all given update attributes
+    # and use it to find the row in the database
+    if ( !defined $object ) {
+        try {
+            $object = $self->new_result($updates)->get_from_storage;
+        };
     }
 
     $object = $self->new_result( {} )
@@ -549,7 +549,7 @@ DBIx::Class::ResultSet::RecursiveUpdate - like update_or_create - but recursive
 
 =head1 VERSION
 
-version 0.31
+version 0.32
 
 =head1 SYNOPSIS
 
