@@ -21,6 +21,7 @@ name: DBIx-Class-ResultSet-RecursiveUpdate
 no_index:
   directory:
     - t/lib
+    - t_dbic/lib
 requires:
   Carp::Clan: 6.04
   DBD::SQLite: 1.21

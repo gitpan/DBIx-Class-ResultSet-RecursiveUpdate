@@ -18,7 +18,8 @@
    "name" : "DBIx-Class-ResultSet-RecursiveUpdate",
    "no_index" : {
       "directory" : [
-         "t/lib"
+         "t/lib",
+         "t_dbic/lib"
       ]
    },
    "prereqs" : {
