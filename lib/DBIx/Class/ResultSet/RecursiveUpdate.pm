@@ -2,7 +2,10 @@ use strict;
 use warnings;
 
 package DBIx::Class::ResultSet::RecursiveUpdate;
-$DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.32';
+{
+  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.33';
+}
+
 # ABSTRACT: like update_or_create - but recursive
 
 use base qw(DBIx::Class::ResultSet);
@@ -36,7 +39,10 @@ sub recursive_update {
 }
 
 package DBIx::Class::ResultSet::RecursiveUpdate::Functions;
-$DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.32';
+{
+  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.33';
+}
+
 use Carp::Clan qw/^DBIx::Class|^HTML::FormHandler|^Try::Tiny/;
 use Scalar::Util qw( blessed );
 use List::MoreUtils qw/ any all/;
@@ -529,6 +535,12 @@ sub _master_relation_cond {
             return _inner( $source, $new_cond, @foreign_ids );
         }
     }
+
+    # we have a custom join condition, so update afterward
+    elsif ( ref $cond eq 'CODE' ) {
+        return 0;
+    }
+
     else {
         $source->throw_exception( "unhandled relation condition " . ref($cond) );
     }
@@ -549,7 +561,7 @@ DBIx::Class::ResultSet::RecursiveUpdate - like update_or_create - but recursive
 
 =head1 VERSION
 
-version 0.32
+version 0.33
 
 =head1 SYNOPSIS
 
