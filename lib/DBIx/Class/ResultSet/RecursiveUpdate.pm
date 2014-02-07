@@ -3,7 +3,7 @@ use warnings;
 
 package DBIx::Class::ResultSet::RecursiveUpdate;
 {
-  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.33';
+  $DBIx::Class::ResultSet::RecursiveUpdate::VERSION = '0.34';
 }
 
 # ABSTRACT: like update_or_create - but recursive
@@ -40,7 +40,7 @@ sub recursive_update {
 
 package DBIx::Class::ResultSet::RecursiveUpdate::Functions;
 {
-  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.33';
+  $DBIx::Class::ResultSet::RecursiveUpdate::Functions::VERSION = '0.34';
 }
 
 use Carp::Clan qw/^DBIx::Class|^HTML::FormHandler|^Try::Tiny/;
@@ -291,7 +291,7 @@ sub _update_relation {
     my $related_resultset = $self->related_resultset($name)->result_source->resultset;
     my $resolved;
     if ( $self->result_source->can('_resolve_condition') ) {
-        $resolved = $self->result_source->_resolve_condition( $info->{cond}, $name, $object );
+        $resolved = $self->result_source->_resolve_condition( $info->{cond}, $name, $object, $name );
     }
     else {
         $self->throw_exception("result_source must support _resolve_condition");
@@ -301,8 +301,18 @@ sub _update_relation {
         if defined $DBIx::Class::ResultSource::UNRESOLVABLE_CONDITION &&
             $DBIx::Class::ResultSource::UNRESOLVABLE_CONDITION == $resolved;
 
-    my @rel_cols = keys %{ $info->{cond} };
-    map { s/^foreign\.// } @rel_cols;
+    # This is a hack. I'm not sure that this will handle most
+    # custom code conditions yet. This needs tests.
+    my @rel_cols;
+    if ( ref $info->{cond} eq 'CODE' ) {
+        @rel_cols = keys %$resolved;
+        map { s/^me\.// } @rel_cols;
+    }
+    else {
+        @rel_cols = keys %{ $info->{cond} };
+        map { s/^foreign\.// } @rel_cols;
+    }
+
 
     # find out if all related columns are nullable
     my $all_fks_nullable = 1;
@@ -418,7 +428,11 @@ sub _update_relation {
         my $might_belong_to =
                ( $attrs->{accessor} eq 'single' || $attrs->{accessor} eq 'filter' ) &&
                $attrs->{is_foreign_key_constraint};
-        unless ( !$sub_object && !$updates && !$might_belong_to && !$join_type eq 'LEFT' ) {
+        # adding check for custom condition that's a coderef
+        # this 'set_from_related' should probably not be called in lots of other
+        # situations too, but until that's worked out, kludge it
+        if ( ( $sub_object || $updates || $might_belong_to || $join_type eq 'LEFT' ) &&
+             ref $info->{cond} ne 'CODE'  ) {
             $object->set_from_related( $name, $sub_object );
         }
     }
@@ -561,7 +575,7 @@ DBIx::Class::ResultSet::RecursiveUpdate - like update_or_create - but recursive
 
 =head1 VERSION
 
-version 0.33
+version 0.34
 
 =head1 SYNOPSIS
 

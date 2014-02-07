@@ -1,7 +1,7 @@
 
 
 This archive contains the distribution DBIx-Class-ResultSet-RecursiveUpdate,
-version 0.33:
+version 0.34:
 
   like update_or_create - but recursive
 

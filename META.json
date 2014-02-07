@@ -63,7 +63,7 @@
          "web" : "http://github.com/gshank/dbix-class-resultset-recursiveupdate"
       }
    },
-   "version" : "0.33",
+   "version" : "0.34",
    "x_Dist_Zilla" : {
       "perl" : {
          "version" : "5.018001"
